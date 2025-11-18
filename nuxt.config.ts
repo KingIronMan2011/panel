@@ -36,7 +36,16 @@ export default defineNuxtConfig({
   compatibilityDate: '2024-11-01',
   devtools: { enabled: true },
   css: ['~/assets/css/main.css'],
-  modules: ['@nuxt/ui', 'nuxt-qrcode', '@nuxt/eslint', '@sidebase/nuxt-auth', 'nuxt-security', '@nuxt/test-utils/module', '@nuxt/hints'],
+  modules: [
+    '@nuxt/ui',
+    'nuxt-qrcode',
+    '@nuxt/eslint',
+    '@sidebase/nuxt-auth',
+    'nuxt-security',
+    '@nuxt/test-utils/module',
+    '@nuxt/hints',
+    'nuxt-charts',
+  ],
 
   auth: {
     origin: authOrigin,
