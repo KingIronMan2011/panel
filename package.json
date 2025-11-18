@@ -38,6 +38,7 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/nodemailer": "^7.0.3",
     "@unhead/vue": "^2.0.19",
+    "@vite-pwa/nuxt": "1.0.7",
     "bcryptjs": "^2.4.3",
     "better-sqlite3": "^12.4.1",
     "drizzle-orm": "^0.36.4",

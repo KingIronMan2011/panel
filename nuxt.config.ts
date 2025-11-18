@@ -45,6 +45,7 @@ export default defineNuxtConfig({
     '@nuxt/test-utils/module',
     '@nuxt/hints',
     'nuxt-charts',
+    '@vite-pwa/nuxt',
   ],
 
   auth: {
