@@ -78,8 +78,6 @@
     "@vitest/ui": "4.0.9",
     "@vue/test-utils": "^2.4.6",
     "drizzle-kit": "^0.31.6",
-    "happy-dom": "^15.11.0",
-    "playwright-core": "^1.48.2",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",
     "vitest": "^4.0.9",
