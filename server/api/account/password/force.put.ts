@@ -1,10 +1,11 @@
-import { createError } from 'h3'
+import { assertMethod, createError, readValidatedBody } from 'h3'
 import { getServerSession } from '#auth'
-import { useDrizzle, tables, eq } from '~~/server/utils/drizzle'
 import bcrypt from 'bcryptjs'
+
+import { useDrizzle, tables, eq } from '~~/server/utils/drizzle'
 import { resolveSessionUser } from '~~/server/utils/auth/sessionUser'
 import { recordAuditEventFromRequest } from '~~/server/utils/audit'
-import { accountPasswordUpdateSchema } from '#shared/schema/account'
+import { accountForcedPasswordSchema } from '#shared/schema/account'
 
 export default defineEventHandler(async (event) => {
   assertMethod(event, 'PUT')
@@ -16,26 +17,37 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 401, statusMessage: 'Unauthorized' })
   }
 
-  const body = await readValidatedBody(event, payload => accountPasswordUpdateSchema.parse(payload))
+  const body = await readValidatedBody(event, payload => accountForcedPasswordSchema.parse(payload))
 
   const db = useDrizzle()
 
-  const userRow = db.select({ password: tables.users.password })
+  const existing = db
+    .select({ password: tables.users.password, passwordResetRequired: tables.users.passwordResetRequired })
     .from(tables.users)
     .where(eq(tables.users.id, user.id))
     .get()
 
-  if (!userRow || !bcrypt.compareSync(body.currentPassword, userRow.password)) {
-    throw createError({ statusCode: 400, statusMessage: 'Current password is incorrect' })
+  if (!existing) {
+    throw createError({ statusCode: 404, statusMessage: 'Not Found', message: 'User not found' })
   }
 
-  const hashedPassword = bcrypt.hashSync(body.newPassword, 12)
+  if (!existing.passwordResetRequired) {
+    throw createError({ statusCode: 400, statusMessage: 'Bad Request', message: 'Password reset not required' })
+  }
+
+  const isSamePassword = await bcrypt.compare(body.newPassword, existing.password)
+  if (isSamePassword) {
+    throw createError({ statusCode: 400, statusMessage: 'Bad Request', message: 'Choose a different password' })
+  }
+
+  const hashedPassword = await bcrypt.hash(body.newPassword, 12)
+  const now = new Date()
 
   db.update(tables.users)
     .set({
       password: hashedPassword,
       passwordResetRequired: false,
-      updatedAt: new Date(),
+      updatedAt: now,
     })
     .where(eq(tables.users.id, user.id))
     .run()
@@ -49,7 +61,7 @@ export default defineEventHandler(async (event) => {
   await recordAuditEventFromRequest(event, {
     actor: user.email || user.id,
     actorType: 'user',
-    action: 'account.password.update',
+    action: 'account.password.force_update',
     targetType: 'user',
     targetId: user.id,
     metadata: {

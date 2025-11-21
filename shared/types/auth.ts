@@ -24,6 +24,7 @@ export interface SessionUser {
   image?: string | null
   permissions?: string[]
   remember?: boolean | null
+  passwordResetRequired?: boolean | null
 }
 
 export interface AuthenticatedSession {
@@ -35,6 +36,7 @@ export interface ResolvedSessionUser extends SessionUser {
   username: string
   role: Role
   permissions: string[]
+  passwordResetRequired: boolean
 }
 
 export interface ServerSessionUser extends SessionUser {
@@ -42,6 +44,7 @@ export interface ServerSessionUser extends SessionUser {
   username: string
   role: Role
   permissions: string[]
+  passwordResetRequired: boolean
 }
 
 export interface ExtendedSession {
@@ -136,4 +139,5 @@ export interface AuthExtendedUser {
   permissions: string[]
   useTotp: boolean
   totpAuthenticatedAt: number | null
+  passwordResetRequired: boolean
 }

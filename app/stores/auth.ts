@@ -16,6 +16,7 @@ export const useAuthStore = defineStore('auth', () => {
   const isAdmin = computed(() => rawUser.value?.role === 'admin')
   const isSuperUser = computed(() => isAdmin.value || Boolean(rawUser.value?.remember))
   const displayName = computed(() => rawUser.value?.username || rawUser.value?.email || rawUser.value?.name || null)
+  const requiresPasswordReset = computed(() => Boolean(rawUser.value?.passwordResetRequired))
   const avatar = computed(() => {
     const fallback = displayName.value || 'User'
     return {
@@ -107,6 +108,7 @@ export const useAuthStore = defineStore('auth', () => {
     syncSession,
     logout,
     login,
+    requiresPasswordReset,
     $reset,
   }
 })

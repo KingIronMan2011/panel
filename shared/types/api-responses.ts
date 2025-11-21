@@ -41,6 +41,11 @@ export interface AdminUserResponse {
   name: string
   role: string
   createdAt: string
+  rootAdmin: boolean
+  suspended: boolean
+  emailVerified: boolean
+  twoFactorEnabled: boolean
+  passwordResetRequired: boolean
 }
 
 export interface UsersResponse {

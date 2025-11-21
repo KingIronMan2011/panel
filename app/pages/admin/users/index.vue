@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { TableColumn } from '@nuxt/ui'
 import type { AdminUserResponse } from '#shared/types/admin'
 
 definePageMeta({
@@ -30,6 +31,14 @@ const {
 )
 
 const users = computed(() => usersData.value?.data ?? [])
+
+const columns = computed<TableColumn<AdminUserResponse>[]>(() => [
+  { accessorKey: 'username', header: 'Username' },
+  { accessorKey: 'email', header: 'Email' },
+  { accessorKey: 'role', header: 'Role' },
+  { accessorKey: 'createdAt', header: 'Created' },
+  { id: 'actions', header: 'Actions' },
+])
 
 const errorMessage = computed(() => {
   const err = error.value
@@ -151,6 +160,10 @@ async function handleDelete(user: AdminUserResponse) {
     })
   }
 }
+
+function formatDate(value: string) {
+  return new Date(value).toLocaleString()
+}
 </script>
 
 <template>
@@ -167,47 +180,76 @@ async function handleDelete(user: AdminUserResponse) {
             </div>
           </template>
 
-          <div class="overflow-hidden rounded-lg border border-default">
-            <div
-              class="grid grid-cols-12 bg-muted/40 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              <span class="col-span-3">Username</span>
-              <span class="col-span-3">Email</span>
-              <span class="col-span-2">Role</span>
-              <span class="col-span-3">Created</span>
-              <span class="col-span-1">Actions</span>
-            </div>
-            <div v-if="loading" class="space-y-2 p-4">
-              <USkeleton v-for="i in 4" :key="i" class="h-8 w-full" />
-            </div>
-            <div v-else-if="errorMessage" class="p-4 text-sm text-error-500">
-              {{ errorMessage }}
-            </div>
-            <div v-else-if="users.length === 0" class="p-4 text-sm text-muted-foreground">
-              No users found.
-            </div>
-            <div v-else class="divide-y divide-default">
-              <div v-for="user in users" :key="user.id" class="grid grid-cols-12 gap-2 px-4 py-3 text-sm items-center">
-                <div class="col-span-3">
-                  <NuxtLink :to="`/admin/users/${user.id}`" class="font-semibold hover:text-primary">
-                    {{ user.username }}
+          <div class="space-y-3">
+            <UAlert
+              v-if="errorMessage"
+              color="error"
+              variant="soft"
+              icon="i-lucide-alert-triangle"
+              :description="errorMessage"
+              title="Failed to load users"
+            />
+
+            <UTable
+              :data="users"
+              :columns="columns"
+              :loading="loading"
+              sticky
+              class="w-full"
+            >
+              <template #loading>
+                <div class="space-y-2 p-4">
+                  <USkeleton v-for="i in 4" :key="`row-skeleton-${i}`" class="h-10 w-full" />
+                </div>
+              </template>
+
+              <template #empty>
+                <div class="px-4 py-6 text-center text-sm text-muted-foreground">
+                  No users found.
+                </div>
+              </template>
+
+              <template #username-cell="{ row }">
+                <div class="flex flex-col">
+                  <NuxtLink :to="`/admin/users/${row.original.id}`" class="font-semibold hover:text-primary">
+                    {{ row.original.username }}
                   </NuxtLink>
-                  <p v-if="user.name" class="text-xs text-muted-foreground">{{ user.name }}</p>
+                  <p v-if="row.original.name" class="text-xs text-muted-foreground">{{ row.original.name }}</p>
                 </div>
-                <span class="col-span-3 text-xs text-muted-foreground">{{ user.email }}</span>
-                <div class="col-span-2">
-                  <UBadge :color="user.role === 'admin' ? 'primary' : 'neutral'" size="sm" variant="subtle">
-                    {{ user.role }}
-                  </UBadge>
+              </template>
+
+              <template #email-cell="{ row }">
+                <span class="text-xs text-muted-foreground">{{ row.original.email }}</span>
+              </template>
+
+              <template #role-cell="{ row }">
+                <UBadge :color="row.original.role === 'admin' ? 'primary' : 'neutral'" size="sm" variant="subtle">
+                  {{ row.original.role }}
+                </UBadge>
+              </template>
+
+              <template #createdAt-cell="{ row }">
+                <span class="text-xs text-muted-foreground">{{ formatDate(row.original.createdAt) }}</span>
+              </template>
+
+              <template #actions-header>
+                <span class="sr-only">Actions</span>
+              </template>
+
+              <template #actions-cell="{ row }">
+                <div class="flex gap-1 justify-end">
+                  <UButton icon="i-lucide-user-circle" size="xs" variant="ghost" :to="`/admin/users/${row.original.id}`" />
+                  <UButton icon="i-lucide-pencil" size="xs" variant="ghost" @click="openEditModal(row.original)" />
+                  <UButton
+                    icon="i-lucide-trash"
+                    size="xs"
+                    variant="ghost"
+                    color="error"
+                    @click="handleDelete(row.original)"
+                  />
                 </div>
-                <span class="col-span-3 text-xs text-muted-foreground">{{ new Date(user.createdAt).toLocaleString()
-                }}</span>
-                <div class="col-span-1 flex gap-1">
-                  <UButton icon="i-lucide-user-circle" size="xs" variant="ghost" :to="`/admin/users/${user.id}`" />
-                  <UButton icon="i-lucide-pencil" size="xs" variant="ghost" @click="openEditModal(user)" />
-                  <UButton icon="i-lucide-trash" size="xs" variant="ghost" color="error" @click="handleDelete(user)" />
-                </div>
-              </div>
-            </div>
+              </template>
+            </UTable>
           </div>
         </UCard>
       </section>

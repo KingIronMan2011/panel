@@ -22,6 +22,13 @@
       "when": 1763670691323,
       "tag": "0002_spooky_red_ghost",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1763699051415,
+      "tag": "0003_premium_magik",
+      "breakpoints": true
     }
   ]
 }

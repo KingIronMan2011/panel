@@ -4,6 +4,15 @@ import { getSettings, getSettingWithDefault, SETTINGS_KEYS } from '~~/server/uti
 
 let transporter: Transporter | null = null
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 interface EmailConfig {
   service?: string | null
   host?: string | null
@@ -155,6 +164,35 @@ export async function sendPasswordResetEmail(
     to: email,
     subject: 'Password Reset Request',
     html,
+  })
+}
+
+export async function sendEmailVerificationEmail(options: {
+  to: string
+  token: string
+  expiresAt: Date
+  username?: string | null
+}): Promise<void> {
+  const baseUrl = resolvePanelBaseUrl()
+  const verifyUrl = `${baseUrl}/auth/email/verify?token=${encodeURIComponent(options.token)}`
+
+  const htmlLines = [
+    '<h2>Verify your XyraPanel email address</h2>',
+    options.username
+      ? `<p>Hi ${escapeHtml(options.username)},</p>`
+      : '<p>Hello,</p>',
+    '<p>We need to confirm this email address belongs to you. Click the button below to finish verifying your account.</p>',
+    `<p><a href="${verifyUrl}" style="display:inline-block;padding:10px 16px;background:#2563eb;color:#fff;border-radius:6px;text-decoration:none">Verify email address</a></p>`,
+    `<p>If the button does not work, copy and paste this link into your browser:</p>`,
+    `<p><a href="${verifyUrl}">${verifyUrl}</a></p>`,
+    '<p>This link will expire in 24 hours.</p>',
+    '<p>If you did not request this, you can safely ignore this email.</p>',
+  ]
+
+  await sendEmail({
+    to: options.to,
+    subject: 'Verify your email address',
+    html: htmlLines.join('\n'),
   })
 }
 

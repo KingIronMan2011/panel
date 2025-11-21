@@ -33,6 +33,10 @@ export interface AdminUserProfileUser {
   twoFactorEnabled: boolean
   emailVerified: boolean
   emailVerifiedAt: string | null
+  suspended: boolean
+  suspendedAt: string | null
+  suspensionReason: string | null
+  passwordResetRequired: boolean
   createdAt: string
   updatedAt: string
 }

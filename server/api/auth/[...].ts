@@ -77,6 +77,7 @@ function getSessionUserSnapshot(userId: string) {
       rootAdmin: tables.users.rootAdmin,
       useTotp: tables.users.useTotp,
       totpAuthenticatedAt: tables.users.totpAuthenticatedAt,
+      passwordResetRequired: tables.users.passwordResetRequired,
     })
     .from(tables.users)
     .where(eq(tables.users.id, userId))
@@ -102,6 +103,7 @@ function getSessionUserSnapshot(userId: string) {
     totpAuthenticatedAt: dbUser.totpAuthenticatedAt
       ? new Date(dbUser.totpAuthenticatedAt).toISOString()
       : null,
+    passwordResetRequired: Boolean(dbUser.passwordResetRequired),
   }
 }
 
@@ -220,6 +222,7 @@ const authHandler = NuxtAuthHandler({
           permissions,
           useTotp: user.useTotp ?? false,
           totpAuthenticatedAt: user.totpAuthenticatedAt ?? null,
+          passwordResetRequired: Boolean(user.passwordResetRequired),
         }
       },
     }),
@@ -325,6 +328,7 @@ const authHandler = NuxtAuthHandler({
       nextUser.permissions = snapshot.permissions
       nextUser.useTotp = snapshot.useTotp
       nextUser.totpAuthenticatedAt = snapshot.totpAuthenticatedAt
+      nextUser.passwordResetRequired = snapshot.passwordResetRequired
 
       session.user = nextUser as typeof session.user
 

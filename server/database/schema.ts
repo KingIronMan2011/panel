@@ -14,6 +14,10 @@ export const users = sqliteTable(
     role: text('role').notNull().default('user'),
     emailVerified: integer('email_verified', { mode: 'timestamp' }),
     image: text('image'),
+    suspended: integer('suspended', { mode: 'boolean' }).notNull().default(false),
+    suspendedAt: integer('suspended_at', { mode: 'timestamp' }),
+    suspensionReason: text('suspension_reason'),
+    passwordResetRequired: integer('password_reset_required', { mode: 'boolean' }).notNull().default(false),
 
     useTotp: integer('use_totp', { mode: 'boolean' }).notNull().default(false),
     totpSecret: text('totp_secret'),
@@ -58,6 +62,7 @@ export const sessions = sqliteTable('sessions', {
   expires: integer('expires', { mode: 'timestamp' }).notNull(),
   createdAt: integer('created_at', { mode: 'timestamp' }),
   updatedAt: integer('updated_at', { mode: 'timestamp' }),
+  impersonatedBy: text('impersonated_by').references(() => users.id, { onDelete: 'set null' }),
 })
 
 export const sessionMetadata = sqliteTable('session_metadata', {
@@ -390,6 +395,19 @@ export const passwordResets = sqliteTable('password_resets', {
   tokenIndex: index('password_resets_token_index').on(table.token),
 }))
 
+export const userImpersonationTokens = sqliteTable('user_impersonation_tokens', {
+  id: text('id').primaryKey(),
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  issuedBy: text('issued_by').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  tokenHash: text('token_hash').notNull().unique(),
+  expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
+  consumedAt: integer('consumed_at', { mode: 'timestamp' }),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+}, table => ({
+  userIndex: index('user_impersonation_tokens_user_id_index').on(table.userId),
+  tokenIndex: index('user_impersonation_tokens_token_hash_index').on(table.tokenHash),
+}))
+
 export const nests = sqliteTable('nests', {
   id: text('id').primaryKey(),
   uuid: text('uuid').notNull().unique(),
@@ -487,6 +505,7 @@ export type ServerTransferRow = typeof serverTransfers.$inferSelect
 export type AuditEventRow = typeof auditEvents.$inferSelect
 export type RecoveryTokenRow = typeof recoveryTokens.$inferSelect
 export type PasswordResetRow = typeof passwordResets.$inferSelect
+export type UserImpersonationTokenRow = typeof userImpersonationTokens.$inferSelect
 export type DatabaseHostRow = typeof databaseHosts.$inferSelect
 export type NestRow = typeof nests.$inferSelect
 export type EggRow = typeof eggs.$inferSelect
@@ -561,6 +580,7 @@ export const tables = {
   auditEvents,
   recoveryTokens,
   passwordResets,
+  userImpersonationTokens,
   nests,
   eggs,
   eggVariables,

@@ -98,3 +98,34 @@ export const accountPasswordUpdateSchema =
 export type AccountPasswordUpdateInput = z.infer<
   typeof accountPasswordUpdateSchema
 >;
+
+const forcedPasswordSchema = z.object({
+  newPassword: newPasswordSchema,
+  confirmPassword: newPasswordSchema.optional(),
+});
+
+type ForcedPasswordInput = z.infer<typeof forcedPasswordSchema>;
+
+function validateForcedPassword(
+  data: ForcedPasswordInput,
+  ctx: z.RefinementCtx
+) {
+  if (
+    data.confirmPassword !== undefined &&
+    data.newPassword !== data.confirmPassword
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["confirmPassword"],
+      message: "Passwords do not match",
+    });
+  }
+}
+
+export const accountForcedPasswordSchema = forcedPasswordSchema.superRefine(
+  validateForcedPassword
+);
+
+export type AccountForcedPasswordInput = z.infer<
+  typeof accountForcedPasswordSchema
+>;

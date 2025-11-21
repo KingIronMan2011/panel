@@ -56,7 +56,11 @@ export default defineEventHandler(async (event) => {
   const now = new Date()
 
   db.update(tables.users)
-    .set({ password: hashedPassword, updatedAt: now })
+    .set({
+      password: hashedPassword,
+      passwordResetRequired: false,
+      updatedAt: now,
+    })
     .where(eq(tables.users.id, user.id))
     .run()
 
