@@ -1,5 +1,7 @@
 import { initiateServerTransfer } from '~~/server/utils/transfers/initiate'
 import { requireAdminPermission } from '~~/server/utils/permission-middleware'
+import { serverTransferSchema } from '~~/shared/schema/admin/server'
+import { validateBody } from '~~/server/utils/validation'
 
 export default defineEventHandler(async (event) => {
   const serverId = getRouterParam(event, 'server')
@@ -12,21 +14,8 @@ export default defineEventHandler(async (event) => {
 
   await requireAdminPermission(event)
 
-  const body = await readBody<{
-    targetNodeId: string
-    allocationId?: string
-    additionalAllocationIds?: string[]
-    startOnCompletion?: boolean
-  }>(event)
-
-  const { targetNodeId, allocationId, additionalAllocationIds, startOnCompletion } = body
-
-  if (!targetNodeId) {
-    throw createError({
-      statusCode: 400,
-      statusMessage: 'Target node ID is required',
-    })
-  }
+  const body = await validateBody(event, serverTransferSchema)
+  const { nodeId: targetNodeId, allocationId, additionalAllocationIds, startOnCompletion } = body
 
   try {
     const result = await initiateServerTransfer(serverId, targetNodeId, {

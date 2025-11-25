@@ -97,3 +97,14 @@ export const updateTaskSchema = z.object({
 
 export type UpdateTaskInput = z.infer<typeof updateTaskSchema>
 
+export const updateDockerImageSchema = z.object({
+  dockerImage: z.string().min(1, 'Docker image is required').max(255, 'Docker image is too long'),
+})
+
+export const attachMountSchema = z.object({
+  mountId: z.string().uuid('Mount ID must be a valid UUID'),
+})
+
+export type UpdateDockerImageInput = z.infer<typeof updateDockerImageSchema>
+export type AttachMountInput = z.infer<typeof attachMountSchema>
+

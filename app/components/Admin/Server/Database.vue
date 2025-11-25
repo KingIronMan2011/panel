@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { z } from 'zod'
 import type { FormSubmitEvent } from '@nuxt/ui'
 import type { AdminServerDatabaseListResponse, AdminServerDatabase } from '#shared/types/admin'
+import { serverDatabaseCreateSchema } from '#shared/schema/admin/server'
 
 const props = defineProps<{
   serverId: string
@@ -17,10 +17,7 @@ const { data: databasesData, refresh, pending: databasesPending } = await useAsy
 )
 const databases = computed<AdminServerDatabase[]>(() => databasesData.value?.data ?? [])
 
-const createSchema = z.object({
-  database: z.string().trim().min(1, 'Database name is required').max(100, 'Database name must be under 100 characters'),
-  remote: z.string().trim().min(1, 'Remote host is required').max(255, 'Remote value is too long'),
-})
+const createSchema = serverDatabaseCreateSchema
 
 type CreateFormSchema = z.infer<typeof createSchema>
 

@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { z } from 'zod'
 import type { FormSubmitEvent } from '@nuxt/ui'
 import type { StartupResponse } from '#shared/types/api'
 import type {
@@ -8,6 +7,7 @@ import type {
   EnvironmentEntry,
   EnvironmentInputValue,
 } from '#shared/types/server'
+import { serverStartupSchema } from '#shared/schema/admin/server'
 
 const props = defineProps<{
   server: Server
@@ -58,11 +58,7 @@ const errorMessage = computed(() => {
   return 'An error occurred'
 })
 
-const schema = z.object({
-  startup: z.string().trim().min(1, 'Startup command is required').max(2048, 'Startup command is too long'),
-  dockerImage: z.string().trim().min(1, 'Docker image is required').max(255, 'Docker image is too long'),
-  environment: z.record(z.string()),
-})
+const schema = serverStartupSchema
 
 type FormSchema = z.infer<typeof schema>
 

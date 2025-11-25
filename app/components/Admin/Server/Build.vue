@@ -2,6 +2,7 @@
 import { z } from 'zod'
 import type { FormSubmitEvent } from '@nuxt/ui'
 import type { Server, ServerLimits } from '#shared/types/server'
+import { serverBuildFormSchema } from '#shared/schema/admin/server'
 
 const props = defineProps<{
   server: Server
@@ -33,13 +34,8 @@ const {
 
 const limits = computed(() => limitsData.value)
 
-const schema = z.object({
+const schema = serverBuildFormSchema.extend({
   cpu: z.coerce.number().min(0, 'CPU limit cannot be negative'),
-  threads: z.union([
-    z.string().trim().min(1).max(191),
-    z.literal('').transform(() => null),
-    z.null(),
-  ]).transform(value => (value === '' ? null : value)),
   memory: z.coerce.number().min(0, 'Memory limit cannot be negative'),
   swap: z.coerce.number().min(-1, 'Swap must be -1 or greater'),
   disk: z.coerce.number().min(0, 'Disk limit cannot be negative'),

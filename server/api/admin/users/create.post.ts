@@ -1,22 +1,11 @@
 import { createError } from 'h3'
 import { APIError } from 'better-auth/api'
-import { z } from 'zod'
 import { getAuth } from '~~/server/utils/auth'
 import { requireAdmin, readValidatedBodyWithLimit, BODY_SIZE_LIMITS } from '~~/server/utils/security'
 import { useDrizzle, tables, eq } from '~~/server/utils/drizzle'
 import { recordAuditEventFromRequest } from '~~/server/utils/audit'
 import { randomUUID } from 'node:crypto'
-
-const createUserSchema = z.object({
-  username: z.string().min(1).max(255).optional(),
-  email: z.string().email().min(1).max(255),
-  password: z.string().min(12).max(255).optional(),
-  nameFirst: z.string().max(255).optional(),
-  nameLast: z.string().max(255).optional(),
-  language: z.string().max(10).optional(),
-  rootAdmin: z.union([z.boolean(), z.string()]).optional(),
-  role: z.enum(['admin', 'user']).optional(),
-})
+import { createUserSchema } from '~~/shared/schema/admin/users'
 
 export default defineEventHandler(async (event) => {
   const session = await requireAdmin(event)

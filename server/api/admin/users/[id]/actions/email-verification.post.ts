@@ -4,11 +4,7 @@ import { getAuth } from '~~/server/utils/auth'
 import { useDrizzle, tables, eq } from '~~/server/utils/drizzle'
 import { recordAuditEventFromRequest } from '~~/server/utils/audit'
 import { requireAdmin, readValidatedBodyWithLimit, BODY_SIZE_LIMITS } from '~~/server/utils/security'
-import { z } from 'zod'
-
-const emailVerificationActionSchema = z.object({
-  action: z.enum(['mark-verified', 'mark-unverified', 'resend-link']),
-})
+import { emailVerificationActionSchema } from '~~/shared/schema/admin/users'
 
 export default defineEventHandler(async (event) => {
   const session = await requireAdmin(event)

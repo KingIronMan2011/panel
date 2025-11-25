@@ -1,10 +1,6 @@
-import { z } from 'zod'
 import { resolveServerRequest } from '~~/server/utils/http/serverAccess'
 import { useDrizzle, tables, eq } from '~~/server/utils/drizzle'
-
-const updateDockerImageSchema = z.object({
-  dockerImage: z.string().min(1, 'Docker image is required'),
-})
+import { updateDockerImageSchema } from '~~/shared/schema/server/operations'
 
 export default defineEventHandler(async (event) => {
   console.log('🐳🐳🐳 [Docker Image PUT] CLIENT ENDPOINT HIT!!!', {

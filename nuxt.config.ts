@@ -65,7 +65,7 @@ export default defineNuxtConfig({
   ],
 
   monacoEditor: {
-    optimizeMonacoDeps: false, 
+    optimizeMonacoDeps: false,
     removeSourceMaps: true,
   },
 
@@ -123,9 +123,9 @@ export default defineNuxtConfig({
           'frame-ancestors': ["'none'"],
           'upgrade-insecure-requests': true,
         },
-        crossOriginEmbedderPolicy: 'unsafe-none', 
-        crossOriginOpenerPolicy: 'same-origin-allow-popups', 
-        crossOriginResourcePolicy: 'cross-origin', 
+        crossOriginEmbedderPolicy: 'unsafe-none',
+        crossOriginOpenerPolicy: 'same-origin-allow-popups',
+        crossOriginResourcePolicy: 'cross-origin',
         strictTransportSecurity: {
           maxAge: 31536000,
           includeSubdomains: true,
@@ -167,11 +167,11 @@ export default defineNuxtConfig({
   },
   site: { indexable: false },
   robots: {
-    blockAiBots: true,
+    blockAiBots: true, // TODO: configure nuxt-robots 
   },
   routeRules: {
     '/api/**': { ssr: false },
-    '/api/admin/servers/:id/build': { 
+    '/api/admin/servers/:id/build': {
       ssr: false,
       prerender: false,
     },
@@ -188,7 +188,7 @@ export default defineNuxtConfig({
     preset: 'node-server',
     errorHandler: './server/error.ts',
     experimental: {
-      tasks: true,
+      tasks: true, // NOTE: The panel will remain in a BETA STATE until Nitro tasks are stable. See https://github.com/nuxt/nitro/issues/1105
       websocket: true,
     },
     handlers: [
@@ -205,7 +205,7 @@ export default defineNuxtConfig({
         route: '/api/servers/:id/files/write',
         method: 'post',
         handler: './server/api/servers/[id]/files/write.post.ts',
-        lazy: true, 
+        lazy: true,
       },
       {
         route: '/api/servers/:id/files',

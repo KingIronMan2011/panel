@@ -114,10 +114,10 @@ export const updateServerBuildSchema = z.object({
 })
 
 export const updateServerStartupSchema = z.object({
-  startup: z.string().optional(),
-  environment: z.record(z.string()).optional(),
+  startup: z.string().trim().max(2048).optional(),
+  environment: z.record(z.string(), z.string()).optional(),
   eggId: z.string().uuid().optional(),
-  dockerImage: z.string().optional(),
+  dockerImage: z.string().trim().max(255).optional(),
   skipScripts: z.boolean().optional(),
 })
 
@@ -141,6 +141,18 @@ export const createAdminApiKeySchema = z.object({
   allowedIps: z.array(ipValidator).optional(),
   expiresAt: z.string().datetime().optional(),
 })
+
+export const serverTransferSchema = z.object({
+  nodeId: z.string().uuid('Target node ID must be a valid UUID'),
+  allocationId: z.string().uuid('Allocation ID must be a valid UUID').optional(),
+  additionalAllocationIds: z.union([
+    z.string().uuid().array(),
+    z.string().transform((val) => val.split(',').map(id => id.trim()).filter(Boolean)),
+  ]).optional(),
+  startOnCompletion: z.boolean().default(true),
+})
+
+export type ServerTransferInput = z.infer<typeof serverTransferSchema>
 
 export type CreateServerInput = z.infer<typeof createServerSchema>
 export type UpdateServerBuildInput = z.infer<typeof updateServerBuildSchema>

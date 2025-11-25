@@ -4,7 +4,7 @@ const env = {
   PORT: process.env.PORT || process.env.NITRO_PORT || 3000,
   HOST: process.env.HOST || process.env.NITRO_HOST || '0.0.0.0',
 }
-
+// TODO: pass env vars for pm2?   
 module.exports = {
   apps: [{
     name: 'xyrapanel',

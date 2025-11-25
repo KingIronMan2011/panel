@@ -1,7 +1,7 @@
 import { createError, assertMethod } from 'h3'
-import { z } from 'zod'
 import { getServerSession, isAdmin  } from '~~/server/utils/session'
 import { useDrizzle, tables, eq } from '~~/server/utils/drizzle'
+import { updateServerStartupSchema } from '~~/shared/schema/admin/server'
 
 export default defineEventHandler(async (event) => {
   assertMethod(event, 'PATCH')
@@ -24,12 +24,7 @@ export default defineEventHandler(async (event) => {
 
   let body
   try {
-    const partialSchema = z.object({
-      startup: z.string().trim().max(2048).optional(),
-      dockerImage: z.string().trim().max(255).optional(),
-      environment: z.record(z.string(), z.string()).optional(),
-    })
-    body = await readValidatedBody(event, payload => partialSchema.parse(payload))
+    body = await readValidatedBody(event, payload => updateServerStartupSchema.parse(payload))
   } catch (validationError) {
     throw createError({
       statusCode: 400,

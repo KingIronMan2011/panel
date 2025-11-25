@@ -1,7 +1,9 @@
-import { createError, readBody } from 'h3'
+import { createError } from 'h3'
 import { getServerSession, isAdmin  } from '~~/server/utils/session'
 import { useDrizzle, tables, eq } from '~~/server/utils/drizzle'
 import { initiateServerTransfer, TransferError } from '~~/server/utils/transfers/initiate'
+import { serverTransferSchema } from '~~/shared/schema/admin/server'
+import { validateBody } from '~~/server/utils/validation'
 
 export default defineEventHandler(async (event) => {
   const session = await getServerSession(event)
@@ -20,15 +22,8 @@ export default defineEventHandler(async (event) => {
     })
   }
 
-  const body = await readBody(event)
-  const { nodeId, allocationId, additionalAllocationIds, startOnCompletion } = body ?? {}
-
-  if (!nodeId) {
-    throw createError({
-      statusCode: 400,
-      message: 'Target node ID is required',
-    })
-  }
+  const body = await validateBody(event, serverTransferSchema)
+  const { nodeId, allocationId, additionalAllocationIds, startOnCompletion } = body
 
   const db = useDrizzle()
   const [server] = db.select()
@@ -67,14 +62,12 @@ export default defineEventHandler(async (event) => {
   try {
     const additionalIds = Array.isArray(additionalAllocationIds)
       ? additionalAllocationIds
-      : typeof additionalAllocationIds === 'string'
-        ? additionalAllocationIds.split(',').map(id => id.trim()).filter(Boolean)
-        : []
+      : []
 
     const result = await initiateServerTransfer(serverId, nodeId, {
-      allocationId: typeof allocationId === 'string' && allocationId.length > 0 ? allocationId : undefined,
+      allocationId,
       additionalAllocationIds: additionalIds,
-      startOnCompletion: Boolean(startOnCompletion),
+      startOnCompletion,
     })
 
     return {

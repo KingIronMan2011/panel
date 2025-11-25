@@ -135,7 +135,7 @@ const transferSchema = z.object({
   nodeId: z.string().trim().min(1, 'Target node ID is required'),
   allocationId: z.string().trim().optional().or(z.literal('')),
   additionalAllocationIds: z.string().trim().optional().or(z.literal('')),
-  startOnCompletion: z.boolean(),
+  startOnCompletion: z.boolean().default(true),
 })
 
 type TransferFormSchema = z.infer<typeof transferSchema>

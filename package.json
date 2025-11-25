@@ -26,8 +26,7 @@
     "test:unit": "vitest run --project unit",
     "test:nuxt": "vitest run --project nuxt",
     "test:e2e": "vitest run --project e2e",
-    "test:coverage": "vitest run --coverage",
-    "validate:wings": "tsx scripts/validate-wings-integration.ts"
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@nuxt/eslint": "1.10.0",

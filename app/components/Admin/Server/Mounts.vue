@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { z } from 'zod'
 import type { FormSubmitEvent } from '@nuxt/ui'
 import type { MountUI as Mount } from '#shared/types/ui'
+import { attachMountSchema } from '#shared/schema/server/operations'
 
 const props = defineProps<{
   serverId: string
@@ -40,9 +40,7 @@ const {
 })
 const availableMounts = computed(() => availableMountsData.value ?? [])
 
-const attachSchema = z.object({
-  mountId: z.string({ required_error: 'Select a mount to attach' }).trim().min(1, 'Select a mount to attach'),
-})
+const attachSchema = attachMountSchema
 
 type AttachFormSchema = z.infer<typeof attachSchema>
 

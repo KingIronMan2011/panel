@@ -1,11 +1,14 @@
 import { z } from 'zod'
 
 export const createUserSchema = z.object({
-  email: z.string().email(),
-  username: z.string().min(1).max(255),
-  name: z.string().min(1).max(255),
-  password: z.string().min(8),
-  role: z.enum(['user', 'admin']).default('user'),
+  username: z.string().min(1).max(255).optional(),
+  email: z.string().email().min(1).max(255),
+  password: z.string().min(12).max(255).optional(),
+  nameFirst: z.string().max(255).optional(),
+  nameLast: z.string().max(255).optional(),
+  language: z.string().max(10).optional(),
+  rootAdmin: z.union([z.boolean(), z.string()]).optional(),
+  role: z.enum(['admin', 'user']).optional(),
 })
 
 export const updateUserSchema = z.object({
@@ -16,6 +19,11 @@ export const updateUserSchema = z.object({
   role: z.enum(['user', 'admin']).optional(),
 })
 
+export const emailVerificationActionSchema = z.object({
+  action: z.enum(['mark-verified', 'mark-unverified', 'resend-link']),
+})
+
 export type CreateUserInput = z.infer<typeof createUserSchema>
 export type UpdateUserInput = z.infer<typeof updateUserSchema>
+export type EmailVerificationActionInput = z.infer<typeof emailVerificationActionSchema>
 
