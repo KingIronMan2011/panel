@@ -23,11 +23,34 @@ export async function resolveServerRequest(
     throw createError({ statusCode: 400, statusMessage: 'Bad Request', message: 'Missing server identifier' })
   }
 
-  const session = await getServerSession(event)
-  const user = resolveSessionUser(session)
+  const contextAuth = (event.context as { auth?: { session?: Awaited<ReturnType<typeof getServerSession>>, user?: any } }).auth
+  
+  let user: ReturnType<typeof resolveSessionUser> | null = null
+
+  if (contextAuth?.user) {
+    const candidate = contextAuth.user as Partial<ReturnType<typeof resolveSessionUser>> | null
+    if (candidate && candidate.id && candidate.username && candidate.role) {
+      user = {
+        id: candidate.id,
+        username: candidate.username,
+        role: candidate.role,
+        permissions: candidate.permissions ?? [],
+        email: candidate.email ?? null,
+        name: candidate.name ?? null,
+        image: candidate.image ?? null,
+        remember: candidate.remember ?? null,
+        passwordResetRequired: candidate.passwordResetRequired ?? false,
+      }
+    }
+  }
+  
+  if (!user) {
+    const session = await getServerSession(event)
+    user = resolveSessionUser(session)
+  }
 
   if (!user) {
-    throw createError({ statusCode: 401, statusMessage: 'Unauthorized' })
+    throw createError({ statusCode: 401, statusMessage: 'Unauthorized', message: 'Authentication required' })
   }
 
   const server = await findServerByIdentifier(identifier)
@@ -60,13 +83,37 @@ export async function resolveServerRequest(
     subuserPermissions = normalizePermissionPayload(subuser.permissions)
   }
 
-  const permissions = await getUserPermissions(user.id || '', server.id)
+  let permissions = await getUserPermissions(user.id || '', server.id) as string[]
+
+  // websocket.connect is automatically granted to anyone with server access
+  if (!permissions.includes('websocket.connect')) {
+    permissions = [...permissions, 'websocket.connect']
+  }
 
   const requiredPermissions = options.requiredPermissions ?? options.fallbackPermissions ?? []
 
   if (requiredPermissions.length > 0) {
     const permissionsArray = permissions as string[]
-    const missing = requiredPermissions.filter(permission => !permissionsArray.includes(permission))
+    
+    const permissionMap: Record<string, string[]> = {
+      'file.write': ['file.write', 'file.update'], // file.write (Wings) maps to both file.write and file.update (Panel)
+      'file.read': ['file.read'],
+      'file.delete': ['file.delete'],
+      'file.upload': ['file.create', 'file.update', 'file.write'],
+      'file.download': ['file.read'],
+      'file.create': ['file.create'],
+      'file.update': ['file.update', 'file.write'],
+    }
+    
+    const missing = requiredPermissions.filter(requiredPerm => {
+      if (permissionsArray.includes(requiredPerm)) {
+        return false
+      }
+      
+      const mappedPerms = permissionMap[requiredPerm] || []
+      return !mappedPerms.some(mappedPerm => permissionsArray.includes(mappedPerm))
+    })
+    
     if (missing.length > 0) {
       throw createError({ statusCode: 403, statusMessage: 'Forbidden', message: `Missing permissions: ${missing.join(', ')}` })
     }

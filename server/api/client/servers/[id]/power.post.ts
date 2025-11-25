@@ -34,12 +34,8 @@ export default defineEventHandler(async (event) => {
     })
   }
 
-  const db = useDrizzle()
-  const [server] = db.select()
-    .from(tables.servers)
-    .where(eq(tables.servers.id, serverId))
-    .limit(1)
-    .all()
+  const { findServerByIdentifier } = await import('~~/server/utils/serversStore')
+  const server = await findServerByIdentifier(serverId)
 
   if (!server) {
     throw createError({
@@ -51,17 +47,18 @@ export default defineEventHandler(async (event) => {
   const isOwner = server.ownerId === user.id
   const isAdmin = user.role === 'admin'
 
+  const db = useDrizzle()
   if (!isOwner && !isAdmin) {
-
     const [subuser] = await db.select()
       .from(tables.serverSubusers)
       .where(
         and(
-          eq(tables.serverSubusers.serverId, serverId),
+          eq(tables.serverSubusers.serverId, server.id),
           eq(tables.serverSubusers.userId, user.id),
         ),
       )
       .limit(1)
+      .all()
 
     if (!subuser) {
       throw createError({
@@ -86,6 +83,65 @@ export default defineEventHandler(async (event) => {
       statusCode: 400,
       message: 'Cannot start or restart a suspended server',
     })
+  }
+
+  // If trying to start a server that isn't installed, automatically trigger installation
+  // This matches Pterodactyl behavior where starting an uninstalled server triggers installation
+  // Only allow this for owners and admins (not subusers)
+  if (body.action === 'start' && (server.status === 'install_failed' || !server.status)) {
+    if (!isOwner && !isAdmin) {
+      throw createError({
+        statusCode: 403,
+        message: 'Server is not installed. Only the server owner or an admin can trigger installation.',
+      })
+    }
+
+    if (!server.eggId) {
+      throw createError({
+        statusCode: 400,
+        message: 'Server has no egg assigned. Cannot install server.',
+      })
+    }
+
+    const { provisionServerOnWings } = await import('~~/server/utils/server-provisioning')
+    
+    const allocations = db
+      .select()
+      .from(tables.serverAllocations)
+      .where(eq(tables.serverAllocations.serverId, server.id))
+      .all()
+
+    const primaryAllocation = allocations.find(a => a.isPrimary)
+
+    if (!primaryAllocation) {
+      throw createError({
+        statusCode: 400,
+        message: 'Server has no primary allocation. Cannot install server.',
+      })
+    }
+
+    setImmediate(async () => {
+      try {
+        await provisionServerOnWings({
+          serverId: server.id!,
+          serverUuid: server.uuid!,
+          eggId: server.eggId!,
+          nodeId: server.nodeId!,
+          allocationId: primaryAllocation.id,
+          environment: {}, 
+          startOnCompletion: true, 
+        })
+        console.log(`[Power Action] Successfully installed and started server: ${server.uuid}`)
+      } catch (error) {
+        console.error(`[Power Action] Failed to install server ${server.uuid}:`, error)
+      }
+    })
+
+    return {
+      success: true,
+      action: 'install_and_start',
+      message: 'Server installation has been triggered. The server will start automatically after installation completes.',
+    }
   }
 
   if (!server.nodeId) {
@@ -115,7 +171,7 @@ export default defineEventHandler(async (event) => {
         status: newStatus,
         updatedAt: new Date(),
       })
-      .where(eq(tables.servers.id, serverId))
+      .where(eq(tables.servers.id, server.id))
       .run()
 
     return {

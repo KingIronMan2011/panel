@@ -14,6 +14,13 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 403, statusMessage: 'Admin access required' })
   }
 
+  const body = await readBody(event)
+  const action = body.action as string
+
+  if (!['start', 'stop', 'restart', 'kill'].includes(action)) {
+    throw createError({ statusCode: 400, statusMessage: 'Invalid power action' })
+  }
+
   const db = useDrizzle()
 
   const server = db.select({
@@ -21,6 +28,9 @@ export default defineEventHandler(async (event) => {
     uuid: tables.servers.uuid,
     name: tables.servers.name,
     nodeId: tables.servers.nodeId,
+    status: tables.servers.status,
+    eggId: tables.servers.eggId,
+    allocationId: tables.servers.allocationId,
   })
     .from(tables.servers)
     .where(eq(tables.servers.id, serverId))
@@ -34,11 +44,55 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'Server has no assigned node' })
   }
 
-  const body = await readBody(event)
-  const action = body.action as string
+  if (action === 'start' && (server.status === 'install_failed' || !server.status)) {
+    if (!server.eggId) {
+      throw createError({
+        statusCode: 400,
+        statusMessage: 'Server has no egg assigned. Cannot install server.',
+      })
+    }
 
-  if (!['start', 'stop', 'restart', 'kill'].includes(action)) {
-    throw createError({ statusCode: 400, statusMessage: 'Invalid power action' })
+    const { provisionServerOnWings } = await import('~~/server/utils/server-provisioning')
+    
+    const allocations = db
+      .select()
+      .from(tables.serverAllocations)
+      .where(eq(tables.serverAllocations.serverId, server.id!))
+      .all()
+
+    const primaryAllocation = allocations.find(a => a.isPrimary)
+
+    if (!primaryAllocation) {
+      throw createError({
+        statusCode: 400,
+        statusMessage: 'Server has no primary allocation. Cannot install server.',
+      })
+    }
+
+    setImmediate(async () => {
+      try {
+        await provisionServerOnWings({
+          serverId: server.id!,
+          serverUuid: server.uuid!,
+          eggId: server.eggId!,
+          nodeId: server.nodeId!,
+          allocationId: primaryAllocation.id,
+          environment: {},
+          startOnCompletion: true,
+        })
+        console.log(`[Power Action] Successfully installed and started server: ${server.uuid}`)
+      } catch (error) {
+        console.error(`[Power Action] Failed to install server ${server.uuid}:`, error)
+      }
+    })
+
+    return {
+      success: true,
+      action: 'install_and_start',
+      serverId: server.id,
+      serverUuid: server.uuid,
+      message: `Server installation has been triggered. The server will start automatically after installation completes.`,
+    }
   }
 
   const node = db.select()

@@ -2,7 +2,7 @@
   <UPage>
     <UContainer>
       <UPageHeader
-        :title="userName ? `Welcome back, ${userName}` : 'Welcome'"
+        :title="welcomeTitle"
         description="Manage your servers and recent activity from one place."
         :links="headerLinks"
       />
@@ -204,7 +204,7 @@ const dashboardData = computed<DashboardData | null>(() => {
     metrics.push(sessionsMetric)
   }
 
-  const meUser = meData.value.data || meData.value.user || null
+  const meUser = meData.value?.user || null
   
   const accountActivity: ClientDashboardActivity[] = (accountActivityResponse.value.data || []).slice(0, 5).map((item) => {
       let icon = 'i-lucide-activity'
@@ -336,5 +336,12 @@ const userName = computed(() => {
   }
 
   return null
+})
+
+const welcomeTitle = computed(() => {
+  if (import.meta.client && userName.value) {
+    return `Welcome back, ${userName.value}`
+  }
+  return 'Welcome'
 })
 </script>

@@ -1,5 +1,6 @@
 import { useDrizzle, tables, eq, inArray } from '~~/server/utils/drizzle'
 import { getWingsClient } from '~~/server/utils/wings-client'
+import { debugLog, debugError, debugWarn } from '~~/server/utils/logger'
 import type { WingsClient } from '~~/server/utils/wings-client'
 import type { WingsNode } from '#shared/types/wings-client'
 import type { WingsServerConfiguration } from '#shared/types/wings-config'
@@ -45,6 +46,12 @@ function buildAllocationsConfig(
   context: ServerProvisioningContext
 ): WingsServerConfiguration['allocations'] {
   const mappings: Record<string, number[]> = {}
+  const primaryIp = context.allocation.ip ?? '0.0.0.0'
+  const primaryPort = context.allocation.port
+  if (!mappings[primaryIp]) {
+    mappings[primaryIp] = []
+  }
+  mappings[primaryIp].push(primaryPort)
 
   for (const allocation of context.additionalAllocations) {
     const allocationIp = allocation.ip
@@ -56,11 +63,12 @@ function buildAllocationsConfig(
     ports.push(allocation.port)
   }
 
+
   return {
     force_outgoing_ip: false,
     default: {
-      ip: context.allocation.ip ?? '0.0.0.0',
-      port: context.allocation.port,
+      ip: primaryIp,
+      port: primaryPort,
     },
     mappings,
   }
@@ -98,8 +106,10 @@ async function buildProvisioningContext(
     .get()
 
   if (!limits) {
-    throw new Error('Server limits not found')
+    debugError(`[Server Provisioning] Server ${config.serverId} has no limits configured!`)
+    throw new Error(`Server limits not found for server ${config.serverId}. The server was likely created without proper limits. Please update the server via the admin panel.`)
   }
+  
 
   const egg = await db
     .select()
@@ -224,9 +234,9 @@ export async function buildWingsServerConfig(
       oom_disabled: Boolean(context.limits.oomDisabled ?? true),
     },
     feature_limits: {
-      databases: context.server.databaseLimit ?? 0,
-      backups: context.server.backupLimit ?? 0,
-      allocations: context.server.allocationLimit ?? 0,
+      databases: context.limits.databaseLimit ?? 0,
+      backups: context.limits.backupLimit ?? 0,
+      allocations: context.limits.allocationLimit ?? 0,
     },
     crash_detection_enabled: true,
     mounts,
@@ -251,7 +261,7 @@ export async function provisionServerOnWings(
 ): Promise<void> {
   const db = useDrizzle()
 
-  const { context, payload } = await buildWingsServerConfig(config)
+  const { context } = await buildWingsServerConfig(config)
 
   const client = getWingsClient(context.wingsNode)
 
@@ -268,7 +278,9 @@ export async function provisionServerOnWings(
     .run()
 
   try {
-    await client.createServer(config.serverUuid, payload as unknown as Record<string, unknown>)
+    await client.createServer(config.serverUuid, {
+      start_on_completion: config.startOnCompletion ?? true,
+    })
 
     await waitForServerInstall(client, config.serverUuid)
 
@@ -291,14 +303,10 @@ export async function provisionServerOnWings(
       .where(eq(tables.servers.id, config.serverId))
       .run()
 
-    try {
-      await client.deleteServer(config.serverUuid)
-    } catch (cleanupError) {
-      const cleanupMessage = cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
-      if (!cleanupMessage.includes('404')) {
-        console.warn('Failed to clean up failed Wings server provisioning:', cleanupMessage)
-      }
-    }
+    debugWarn('Server installation failed, keeping server on Wings for file access:', {
+      serverUuid: config.serverUuid,
+      error: error instanceof Error ? error.message : String(error),
+    })
 
     throw error
   }

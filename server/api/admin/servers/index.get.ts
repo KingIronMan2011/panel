@@ -1,40 +1,43 @@
 import { getServerSession, isAdmin  } from '~~/server/utils/session'
-import { useDrizzle, tables, eq } from '~~/server/utils/drizzle'
+import { useDrizzle, tables, eq, isNotNull, desc } from '~~/server/utils/drizzle'
 import { sql } from 'drizzle-orm'
 
 export default defineEventHandler(async (event) => {
-  const session = await getServerSession(event)
+  try {
+    const session = await getServerSession(event)
 
-  if (!isAdmin(session)) {
-    throw createError({ statusCode: 403, message: 'Forbidden' })
-  }
+    if (!isAdmin(session)) {
+      throw createError({ statusCode: 403, message: 'Forbidden' })
+    }
 
-  const query = getQuery(event)
-  const page = Number(query.page) || 1
-  const perPage = Math.min(Number(query.per_page) || 50, 100)
-  const offset = (page - 1) * perPage
+    const query = getQuery(event)
+    const page = Number(query.page) || 1
+    const perPage = Math.min(Number(query.per_page) || 50, 100)
+    const offset = (page - 1) * perPage
 
-  const db = useDrizzle()
+    const db = useDrizzle()
 
-  const servers = db
-    .select({
-      server: tables.servers,
-      owner: tables.users,
-      node: tables.wingsNodes,
-      egg: tables.eggs,
-      nest: tables.nests,
-    })
-    .from(tables.servers)
-    .leftJoin(tables.users, eq(tables.servers.ownerId, tables.users.id))
-    .leftJoin(tables.wingsNodes, eq(tables.servers.nodeId, tables.wingsNodes.id))
-    .leftJoin(tables.eggs, eq(tables.servers.eggId, tables.eggs.id))
-    .leftJoin(tables.nests, eq(tables.servers.nestId, tables.nests.id))
-    .limit(perPage)
-    .offset(offset)
-    .all()
+    const servers = db
+      .select({
+        server: tables.servers,
+        owner: tables.users,
+        node: tables.wingsNodes,
+        egg: tables.eggs,
+        nest: tables.nests,
+      })
+      .from(tables.servers)
+      .leftJoin(tables.users, eq(tables.servers.ownerId, tables.users.id))
+      .leftJoin(tables.wingsNodes, eq(tables.servers.nodeId, tables.wingsNodes.id))
+      .leftJoin(tables.eggs, eq(tables.servers.eggId, tables.eggs.id))
+      .leftJoin(tables.nests, eq(tables.servers.nestId, tables.nests.id))
+      .where(isNotNull(tables.servers.nodeId))
+      .orderBy(desc(tables.servers.updatedAt)) 
+      .limit(perPage)
+      .offset(offset)
+      .all()
 
-  const total = db.select({ count: sql`count(*)` }).from(tables.servers).get()
-  const totalCount = Number(total?.count ?? 0)
+    const total = db.select({ count: sql`count(*)` }).from(tables.servers).where(isNotNull(tables.servers.nodeId)).get()
+    const totalCount = Number(total?.count ?? 0)
 
   return {
     data: servers.map(({ server, owner, node, egg, nest }) => ({
@@ -75,5 +78,16 @@ export default defineEventHandler(async (event) => {
         total_pages: Math.ceil(totalCount / perPage),
       },
     },
+  }
+  } catch (error) {
+    console.error('[GET] /api/admin/servers: Error:', error)
+    if (error && typeof error === 'object' && 'statusCode' in error) {
+      throw error
+    }
+    throw createError({
+      statusCode: 500,
+      statusMessage: 'Internal Server Error',
+      message: error instanceof Error ? error.message : 'Failed to fetch servers',
+    })
   }
 })

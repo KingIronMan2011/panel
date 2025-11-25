@@ -105,7 +105,7 @@ async function handleSubmit() {
   try {
     if (editingUser.value) {
       await $fetch(`/api/admin/users/${editingUser.value.id}`, {
-        method: 'PATCH',
+        method: 'patch',
         body: userForm.value,
       })
       toast.add({ title: 'User updated', color: 'success' })

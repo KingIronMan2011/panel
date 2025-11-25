@@ -61,6 +61,23 @@ async function readUpdatePayload(event: H3Event): Promise<UpdateAdminServerPaylo
 }
 
 export default defineEventHandler(async (event) => {
+  // The more specific [id]/build.patch.ts should handle those
+  const path = event.path || event.node.req.url?.split('?')[0] || ''
+  const normalizedPath = path.replace(/\/+$/, '')
+  
+  if (normalizedPath.endsWith('/build') || normalizedPath.includes('/build/')) {
+    console.log('[ID Patch] [id].patch.ts matched a /build request! This should not happen!', {
+      method: event.method,
+      path: normalizedPath,
+      url: event.node.req.url,
+    })
+    console.log('[ID Patch] This means [id]/build.patch.ts route is NOT matching - route registration issue!')
+    throw createError({
+      statusCode: 404,
+      message: 'Route not found - build.patch.ts should handle this',
+    })
+  }
+  
   assertMethod(event, 'PATCH')
 
   const session = await getServerSession(event)

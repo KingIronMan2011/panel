@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
-import type { PowerAction } from '#shared/types/server'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import type { PowerAction, PanelServerDetails } from '#shared/types/server'
 
 const route = useRoute()
 
@@ -10,6 +10,33 @@ definePageMeta({
 })
 
 const serverId = computed(() => route.params.id as string)
+
+const { data: serverResponse } = await useFetch(
+  `/api/servers/${serverId.value}`,
+  {
+    watch: [serverId],
+    key: `server-${serverId.value}`,
+    immediate: true,
+  },
+)
+const serverData = computed(() => serverResponse.value as { data: PanelServerDetails } | null)
+
+const server = computed(() => serverData.value?.data ?? null)
+const primaryAllocation = computed(() => {
+  return server.value?.allocations?.primary ?? null
+})
+const serverLimits = computed(() => server.value?.limits ?? null)
+
+watch(server, (newServer) => {
+  if (import.meta.client && newServer) {
+    console.log('[Console] Server data loaded:', {
+      uuid: newServer.uuid,
+      hasAllocations: !!newServer.allocations,
+      primaryAllocation: newServer.allocations?.primary,
+      allAllocations: newServer.allocations,
+    })
+  }
+}, { immediate: true })
 
 const {
   connected,
@@ -21,9 +48,77 @@ const {
   sendCommand,
   sendPowerAction,
   reconnect,
-} = useServerWebSocket(serverId.value)
+} = useServerWebSocket(serverId)
 
 const showStats = ref(true)
+const terminalRef = ref<{ search?: (term: string) => void; clear?: () => void; downloadLogs?: () => void; scrollToBottom?: () => void } | null>(null)
+
+const canSendCommands = computed(() => {
+  const perms = server.value?.permissions || []
+  return perms.includes('control.console') || perms.includes('*')
+})
+
+const commandInput = ref('')
+const commandHistory = ref<string[]>([])
+const historyIndex = ref(-1)
+
+if (import.meta.client) {
+  try {
+    const stored = localStorage.getItem(`server-${serverId.value}:command_history`)
+    if (stored) {
+      commandHistory.value = JSON.parse(stored)
+    }
+  } catch (e) {
+    console.warn('[Console] Failed to load command history:', e)
+  }
+}
+
+function saveHistory() {
+  if (import.meta.client) {
+    try {
+      localStorage.setItem(`server-${serverId.value}:command_history`, JSON.stringify(commandHistory.value))
+    } catch (e) {
+      console.warn('[Console] Failed to save command history:', e)
+    }
+  }
+}
+
+function handleCommandKeyDown(e: KeyboardEvent) {
+  if (e.key === 'ArrowUp') {
+    e.preventDefault()
+    if (commandHistory.value.length > 0) {
+      historyIndex.value = Math.min(historyIndex.value + 1, commandHistory.value.length - 1)
+      commandInput.value = commandHistory.value[historyIndex.value] || ''
+    }
+  } else if (e.key === 'ArrowDown') {
+    e.preventDefault()
+    if (historyIndex.value > 0) {
+      historyIndex.value = Math.max(historyIndex.value - 1, -1)
+      const nextCommand = historyIndex.value >= 0 ? commandHistory.value[historyIndex.value] : undefined
+      commandInput.value = nextCommand ?? ''
+    } else if (historyIndex.value === 0) {
+      commandInput.value = ''
+      historyIndex.value = -1
+    }
+  } else if (e.key === 'Enter' && commandInput.value.trim()) {
+    e.preventDefault()
+    const command = commandInput.value.trim()
+    
+    const index = commandHistory.value.indexOf(command)
+    if (index > -1) {
+      commandHistory.value.splice(index, 1)
+    }
+    commandHistory.value.unshift(command)
+    if (commandHistory.value.length > 32) {
+      commandHistory.value = commandHistory.value.slice(0, 32)
+    }
+    saveHistory()
+    
+    handleCommand(command)
+    commandInput.value = ''
+    historyIndex.value = -1
+  }
+}
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B'
@@ -33,15 +128,46 @@ function formatBytes(bytes: number): string {
   return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`
 }
 
-function formatUptime(seconds: number): string {
-  const days = Math.floor(seconds / 86400)
-  const hours = Math.floor((seconds % 86400) / 3600)
-  const mins = Math.floor((seconds % 3600) / 60)
+const currentTime = ref(Date.now())
+const lastStatsTime = ref<number | null>(null)
+let uptimeInterval: ReturnType<typeof setInterval> | null = null
 
-  if (days > 0) return `${days}d ${hours}h ${mins}m`
-  if (hours > 0) return `${hours}h ${mins}m`
-  return `${mins}m`
-}
+watch(() => stats.value?.uptime, () => {
+  if (stats.value?.uptime) {
+    lastStatsTime.value = Date.now()
+  }
+})
+
+onMounted(() => {
+  uptimeInterval = setInterval(() => {
+    currentTime.value = Date.now()
+  }, 1000)
+})
+
+onUnmounted(() => {
+  if (uptimeInterval) {
+    clearInterval(uptimeInterval)
+    uptimeInterval = null
+  }
+})
+
+const formattedUptime = computed(() => {
+  if (!stats.value || !stats.value.uptime || !lastStatsTime.value) return '00:00:00'
+  
+  const baseUptimeMs = stats.value.uptime
+  const elapsedSinceUpdate = currentTime.value - lastStatsTime.value
+  const totalUptimeMs = baseUptimeMs + elapsedSinceUpdate
+  
+  // Convert to seconds
+  const totalSeconds = Math.floor(totalUptimeMs / 1000)
+  
+  const hours = Math.floor(totalSeconds / 3600)
+  const mins = Math.floor((totalSeconds % 3600) / 60)
+  const secs = totalSeconds % 60
+  
+  const pad = (n: number) => n.toString().padStart(2, '0')
+  return `${pad(hours)}:${pad(mins)}:${pad(secs)}`
+})
 
 function getStateColor(state: string): 'primary' | 'success' | 'warning' | 'error' {
   switch (state) {
@@ -64,8 +190,24 @@ function getStateIcon(state: string): string {
 }
 
 function handleCommand(command: string) {
-  if (!command.trim() || !connected.value) return
+  console.log(`[Console] Command received from terminal:`, command)
+  console.log(`[Console] Connection state:`, {
+    connected: connected.value,
+    command: command,
+    trimmed: command.trim(),
+  })
+  
+  if (!command.trim()) {
+    console.warn('[Console] Empty command, ignoring')
+    return
+  }
+  
+  if (!connected.value) {
+    console.warn('[Console] Not connected to WebSocket, ignoring command')
+    return
+  }
 
+  console.log(`[Console] Sending command to WebSocket`)
   sendCommand(command)
 }
 
@@ -74,12 +216,17 @@ function handlePowerAction(action: PowerAction) {
   sendPowerAction(action)
 }
 
-const diskPercent = computed(() => {
-  if (!stats.value) return 0
+function handleSearch() {
+  if (!import.meta.client) return
+  const term = (typeof globalThis !== 'undefined' && 'prompt' in globalThis)
+    ? (globalThis as { prompt?: (message: string) => string | null }).prompt?.('Search:')
+    : null
+  if (term) {
+    terminalRef.value?.search?.(term)
+  }
+}
 
-  const diskLimit = 10 * 1024 * 1024 * 1024
-  return (stats.value.diskBytes / diskLimit) * 100
-})
+
 </script>
 
 <template>
@@ -97,11 +244,6 @@ const diskPercent = computed(() => {
 
           <div class="flex flex-wrap items-center justify-between gap-4">
             <div class="flex items-center gap-3">
-              <UBadge :color="getStateColor(serverState)" size="lg">
-                <UIcon :name="getStateIcon(serverState)" :class="{ 'animate-spin': serverState === 'starting' || serverState === 'stopping' }" />
-                <span class="ml-2 capitalize">{{ serverState }}</span>
-              </UBadge>
-
               <UBadge v-if="!connected" color="error" size="sm">
                 <UIcon name="i-lucide-wifi-off" />
                 <span class="ml-1">Disconnected</span>
@@ -149,7 +291,7 @@ const diskPercent = computed(() => {
             </div>
           </div>
 
-          <UAlert v-if="wsError" color="error" icon="i-lucide-alert-circle">
+          <UAlert v-if="wsError && wsError !== 'Connecting...'" color="error" icon="i-lucide-alert-circle">
             <template #title>Connection Error</template>
             <template #description>
               {{ wsError }}
@@ -161,37 +303,12 @@ const diskPercent = computed(() => {
             </template>
           </UAlert>
 
-          <UAlert v-else-if="!connected && !wsError" color="warning" icon="i-lucide-wifi-off">
+          <UAlert v-else-if="!connected && (!wsError || wsError === 'Connecting...')" color="warning" icon="i-lucide-wifi-off">
             <template #title>Connecting...</template>
             <template #description>
-              Establishing connection to server console
+              {{ wsError === 'Connecting...' ? 'Establishing connection to server console' : 'Establishing connection to server console' }}
             </template>
           </UAlert>
-
-          <ServerStatsChart v-if="showStats && stats" :stats="stats" :history="statsHistory" />
-
-          <div v-if="showStats && stats" class="grid gap-4 md:grid-cols-2">
-            <UCard>
-              <div class="space-y-2">
-                <div class="flex items-center justify-between">
-                  <span class="text-xs text-muted-foreground">Disk Usage</span>
-                  <UIcon name="i-lucide-hard-drive" class="size-4 text-primary" />
-                </div>
-                <div class="text-2xl font-bold">{{ formatBytes(stats.diskBytes) }}</div>
-                <UProgress :value="diskPercent" size="xs" />
-              </div>
-            </UCard>
-
-            <UCard>
-              <div class="space-y-2">
-                <div class="flex items-center justify-between">
-                  <span class="text-xs text-muted-foreground">Uptime</span>
-                  <UIcon name="i-lucide-clock" class="size-4 text-primary" />
-                </div>
-                <div class="text-2xl font-bold">{{ formatUptime(stats.uptime) }}</div>
-              </div>
-            </UCard>
-          </div>
 
           <UCard>
             <template #header>
@@ -211,11 +328,47 @@ const diskPercent = computed(() => {
               </div>
             </template>
 
-            <div class="h-[500px] overflow-hidden rounded-md bg-black">
+            <div class="relative h-[500px] overflow-hidden rounded-md bg-black">
+              <div class="absolute top-2 right-2 z-10 flex gap-2">
+                <UButton
+                  icon="i-lucide-search"
+                  size="xs"
+                  variant="ghost"
+                  color="neutral"
+                  title="Search (Ctrl+F)"
+                  @click="handleSearch"
+                />
+                <UButton
+                  icon="i-lucide-trash-2"
+                  size="xs"
+                  variant="ghost"
+                  color="neutral"
+                  title="Clear Console"
+                  @click="() => terminalRef?.clear?.()"
+                />
+                <UButton
+                  icon="i-lucide-download"
+                  size="xs"
+                  variant="ghost"
+                  color="neutral"
+                  title="Download Logs"
+                  @click="() => terminalRef?.downloadLogs?.()"
+                />
+                <UButton
+                  icon="i-lucide-arrow-down"
+                  size="xs"
+                  variant="ghost"
+                  color="neutral"
+                  title="Scroll to Bottom"
+                  @click="() => terminalRef?.scrollToBottom?.()"
+                />
+              </div>
               <ClientOnly>
                 <ServerXTerminal
+                  ref="terminalRef"
                   :logs="logs"
                   :connected="connected"
+                  :server-id="serverId"
                   @command="handleCommand"
                 />
                 <template #fallback>
@@ -228,7 +381,26 @@ const diskPercent = computed(() => {
                 </template>
               </ClientOnly>
             </div>
+            
+            <div v-if="canSendCommands" class="relative border-t border-gray-800">
+              <input
+                v-model="commandInput"
+                type="text"
+                placeholder="Type a command..."
+                :disabled="!connected"
+                autocomplete="off"
+                autocorrect="off"
+                autocapitalize="none"
+                class="w-full bg-gray-900 px-10 py-2 text-gray-100 font-mono text-sm border-0 border-b-2 border-transparent focus:border-cyan-500 focus:ring-0 outline-none transition-colors"
+                @keydown="handleCommandKeyDown"
+              >
+              <div class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-100 pointer-events-none">
+                <UIcon name="i-lucide-chevron-right" class="w-4 h-4" />
+              </div>
+            </div>
           </UCard>
+
+          <ServerStatsChart v-if="showStats && stats" :stats="stats" :history="statsHistory" />
         </div>
       </UContainer>
     </UPageBody>
@@ -249,7 +421,27 @@ const diskPercent = computed(() => {
             </div>
             <div class="flex items-center justify-between">
               <span class="text-muted-foreground">State</span>
-              <span class="capitalize">{{ serverState }}</span>
+              <UBadge :color="getStateColor(serverState)" size="xs">
+                <UIcon :name="getStateIcon(serverState)" :class="{ 'animate-spin': serverState === 'starting' || serverState === 'stopping' }" />
+                <span class="ml-1 capitalize">{{ serverState }}</span>
+              </UBadge>
+            </div>
+            <div class="flex items-center justify-between">
+              <span class="text-muted-foreground">IP:Port</span>
+              <span v-if="primaryAllocation" class="font-mono">{{ primaryAllocation.ip }}:{{ primaryAllocation.port }}</span>
+              <span v-else class="text-muted-foreground">Not assigned</span>
+            </div>
+            <div v-if="stats && stats.uptime" class="flex items-center justify-between">
+              <span class="text-muted-foreground">Uptime</span>
+              <span class="font-mono">{{ formattedUptime }}</span>
+            </div>
+            <div v-if="stats && stats.memoryLimitBytes" class="flex items-center justify-between">
+              <span class="text-muted-foreground">RAM</span>
+              <span>{{ formatBytes(stats.memoryBytes) }} / {{ formatBytes(stats.memoryLimitBytes) }}</span>
+            </div>
+            <div v-if="stats && serverLimits?.disk" class="flex items-center justify-between">
+              <span class="text-muted-foreground">Storage</span>
+              <span>{{ formatBytes(stats.diskBytes) }} / {{ formatBytes((serverLimits.disk || 0) * 1024 * 1024) }}</span>
             </div>
             <div v-if="stats" class="flex items-center justify-between">
               <span class="text-muted-foreground">Network RX</span>
@@ -259,51 +451,6 @@ const diskPercent = computed(() => {
               <span class="text-muted-foreground">Network TX</span>
               <span>{{ formatBytes(stats.networkTxBytes) }}</span>
             </div>
-          </div>
-        </UCard>
-
-        <UCard class="mt-4">
-          <template #header>
-            <h3 class="text-sm font-semibold">Quick Actions</h3>
-          </template>
-
-          <div class="space-y-2">
-            <UButton
-              block
-              variant="ghost"
-              size="sm"
-              icon="i-lucide-file-text"
-              :to="`/server/${serverId}/files`"
-            >
-              File Manager
-            </UButton>
-            <UButton
-              block
-              variant="ghost"
-              size="sm"
-              icon="i-lucide-database"
-              :to="`/server/${serverId}/databases`"
-            >
-              Databases
-            </UButton>
-            <UButton
-              block
-              variant="ghost"
-              size="sm"
-              icon="i-lucide-archive"
-              :to="`/server/${serverId}/backups`"
-            >
-              Backups
-            </UButton>
-            <UButton
-              block
-              variant="ghost"
-              size="sm"
-              icon="i-lucide-settings"
-              :to="`/server/${serverId}/settings`"
-            >
-              Settings
-            </UButton>
           </div>
         </UCard>
       </UPageAside>

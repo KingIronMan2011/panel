@@ -1,10 +1,11 @@
-import { createError } from 'h3'
+import { createError, assertMethod } from 'h3'
+import { z } from 'zod'
 import { getServerSession, isAdmin  } from '~~/server/utils/session'
 import { useDrizzle, tables, eq } from '~~/server/utils/drizzle'
-import { createWingsClient } from '~~/server/utils/wings/client'
-import { serverStartupSchema } from '#shared/schema/admin/server'
 
 export default defineEventHandler(async (event) => {
+  assertMethod(event, 'PATCH')
+
   const session = await getServerSession(event)
   if (!isAdmin(session)) {
     throw createError({
@@ -13,23 +14,35 @@ export default defineEventHandler(async (event) => {
     })
   }
 
-  const serverId = getRouterParam(event, 'id')
-  if (!serverId) {
+  const identifier = getRouterParam(event, 'id')
+  if (!identifier) {
     throw createError({
       statusCode: 400,
       message: 'Server ID is required',
     })
   }
 
-  const body = await readValidatedBody(event, payload => serverStartupSchema.partial().parse(payload))
+  let body
+  try {
+    const partialSchema = z.object({
+      startup: z.string().trim().max(2048).optional(),
+      dockerImage: z.string().trim().max(255).optional(),
+      environment: z.record(z.string(), z.string()).optional(),
+    })
+    body = await readValidatedBody(event, payload => partialSchema.parse(payload))
+  } catch (validationError) {
+    throw createError({
+      statusCode: 400,
+      message: 'Invalid request body',
+      data: { error: validationError instanceof Error ? validationError.message : String(validationError) },
+    })
+  }
+
   const { startup, dockerImage, environment } = body
 
   const db = useDrizzle()
-  const [server] = db.select()
-    .from(tables.servers)
-    .where(eq(tables.servers.id, serverId))
-    .limit(1)
-    .all()
+  const { findServerByIdentifier } = await import('~~/server/utils/serversStore')
+  const server = await findServerByIdentifier(identifier)
 
   if (!server) {
     throw createError({
@@ -38,66 +51,81 @@ export default defineEventHandler(async (event) => {
     })
   }
 
+  const serverId = server.id
+
+  const now = new Date()
+  const serverUpdates: Record<string, unknown> = {
+    updatedAt: now,
+  }
+  
   if (startup !== undefined) {
-    db.update(tables.servers)
-      .set({ startup })
-      .where(eq(tables.servers.id, serverId))
-      .run()
+    serverUpdates.startup = startup
   }
 
   if (dockerImage !== undefined) {
-    db.update(tables.servers)
-      .set({ dockerImage })
-      .where(eq(tables.servers.id, serverId))
-      .run()
+    serverUpdates.dockerImage = dockerImage
+    serverUpdates.image = dockerImage
+  }
+
+  if (Object.keys(serverUpdates).length > 1) {
+    
+    try {
+      db.update(tables.servers)
+        .set(serverUpdates)
+        .where(eq(tables.servers.id, serverId))
+        .run()
+      
+      const [updated] = db.select()
+        .from(tables.servers)
+        .where(eq(tables.servers.id, serverId))
+        .limit(1)
+        .all()
+      
+      if (!updated) {
+        throw new Error('Server not found after update')
+      }
+      
+      if (dockerImage !== undefined) {
+        if (updated.dockerImage !== dockerImage) {
+          throw new Error(`Failed to save dockerImage: expected "${dockerImage}", got "${updated.dockerImage}"`)
+        }
+        if (updated.image !== dockerImage) {
+          throw new Error(`Failed to save image: expected "${dockerImage}", got "${updated.image}"`)
+        }
+      }
+      
+      if (startup !== undefined && updated.startup !== startup) {
+        throw new Error(`Failed to save startup: expected "${startup}", got "${updated.startup}"`)
+      }
+    } catch (error) {
+      throw createError({
+        statusCode: 500,
+        message: 'Failed to save server configuration',
+        data: { error: error instanceof Error ? error.message : String(error) },
+      })
+    }
   }
 
   if (environment !== undefined) {
-
     db.delete(tables.serverStartupEnv)
       .where(eq(tables.serverStartupEnv.serverId, serverId))
       .run()
 
-    const now = new Date()
-    for (const [key, value] of Object.entries(environment)) {
-      const id = `env_${serverId}_${key}_${Date.now()}`
+    const envEntries = Object.entries(environment)
+    
+    for (const [key, value] of envEntries) {
+      const id = `env_${serverId}_${key}_${Date.now()}_${Math.random()}`
+      const stringValue = String(value ?? '')
       db.insert(tables.serverStartupEnv)
         .values({
           id,
           serverId,
           key,
-          value: String(value),
+          value: stringValue,
           createdAt: now,
           updatedAt: now,
         })
         .run()
-    }
-  }
-
-  if (server.nodeId) {
-    const [node] = db.select()
-      .from(tables.wingsNodes)
-      .where(eq(tables.wingsNodes.id, server.nodeId))
-      .limit(1)
-      .all()
-
-    if (node) {
-      try {
-        const wingsClient = createWingsClient({
-          fqdn: node.fqdn,
-          scheme: node.scheme,
-          daemonListen: node.daemonListen,
-          tokenId: node.tokenIdentifier,
-          tokenSecret: node.tokenSecret,
-        })
-
-        await fetch(`${wingsClient}/sync`, {
-          method: 'POST',
-        })
-      } catch (error) {
-        console.error('Failed to sync startup configuration with Wings:', error)
-
-      }
     }
   }
 

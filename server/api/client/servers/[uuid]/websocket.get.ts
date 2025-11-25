@@ -1,71 +1,62 @@
-export default defineEventHandler(async (event) => {
-  const { getServerSession } = await import('~~/server/utils/session')
-  const session = await getServerSession(event)
-  if (!session?.user) {
-    throw createError({
-      statusCode: 401,
-      message: 'Unauthorized',
-    })
-  }
+import { createError, getRouterParam, setResponseHeader } from 'h3'
+import { resolveServerRequest } from '~~/server/utils/http/serverAccess'
+import { generateWingsJWT } from '~~/server/utils/wings/jwt'
 
-  const uuid = getRouterParam(event, 'uuid')
+interface WebSocketToken {
+  token: string
+  socket: string
+}
 
-  if (!uuid) {
+export default defineEventHandler(async (event): Promise<WebSocketToken> => {
+  const id = getRouterParam(event, 'uuid')
+  if (!id || typeof id !== 'string') {
     throw createError({
       statusCode: 400,
-      message: 'Server UUID is required',
+      statusMessage: 'Bad Request',
+      message: 'Missing server identifier',
     })
   }
 
-  const { useDrizzle, tables, eq } = await import('../../../../utils/drizzle')
-  const db = useDrizzle()
+  const context = await resolveServerRequest(event, {
+    identifier: id,
+    requiredPermissions: ['websocket.connect'],
+  })
 
-  const server = db
-    .select()
-    .from(tables.servers)
-    .where(eq(tables.servers.uuid, uuid))
-    .get()
-
-  if (!server) {
-    throw createError({
-      statusCode: 404,
-      message: 'Server not found',
-    })
-  }
-
-  const node = db
-    .select()
-    .from(tables.wingsNodes)
-    .where(eq(tables.wingsNodes.id, server.nodeId!))
-    .get()
-
-  if (!node) {
-    throw createError({
-      statusCode: 404,
-      message: 'Node not found',
-    })
-  }
-
-  const { requireServerPermission } = await import('../../../../utils/api-helpers')
-  await requireServerPermission(event, server.id, 'control.console')
-
-  const { getWingsClientForServer } = await import('../../../../utils/wings-client')
-  const { client } = await getWingsClientForServer(uuid)
-
-  try {
-    const wsData = await client.getWebSocketToken(uuid)
-
-    return {
-      data: {
-        token: wsData.token,
-        socket: wsData.socket || `wss://${node.fqdn}:${node.daemonListen}/api/servers/${uuid}/ws`,
-      },
-    }
-  } catch (error) {
-    console.error('Failed to get WebSocket token:', error)
+  if (!context.node || !context.nodeConnection) {
     throw createError({
       statusCode: 500,
-      message: error instanceof Error ? error.message : 'Failed to get WebSocket token',
+      statusMessage: 'Node not available',
+      message: 'Server has no resolved Wings node',
     })
   }
+
+  const { node, nodeConnection, user, server, permissions } = context
+
+  const baseUrl = `${node.scheme}://${node.fqdn}:${node.daemonListen}`
+  
+  const token = await generateWingsJWT(
+    {
+      tokenSecret: nodeConnection.tokenSecret,
+      baseUrl,
+    },
+    {
+      server: { uuid: server.uuid },
+      user: user.id ? { id: user.id, uuid: user.id } : undefined,
+      permissions,
+      identifiedBy: `${user.id ?? 'anonymous'}:${server.uuid}`,
+      expiresIn: 900,
+    },
+  )
+
+  const protocol = node.scheme === 'https' ? 'wss' : 'ws'
+  const socketUrl = `${protocol}://${node.fqdn}:${node.daemonListen}/api/servers/${server.uuid}/ws`
+
+  const response: WebSocketToken = {
+    token,
+    socket: socketUrl,
+  }
+  
+  setResponseHeader(event, 'Content-Type', 'application/json')
+  
+  return response
 })

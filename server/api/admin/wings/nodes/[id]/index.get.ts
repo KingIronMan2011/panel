@@ -43,10 +43,8 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'Missing node id' })
   }
 
-  const session = await getServerSession(event)
-
-  console.log('[Node Detail] Session:', JSON.stringify(session?.user, null, 2))
-  console.log('[Node Detail] isAdmin:', isAdmin(session))
+  const contextAuth = (event.context as { auth?: { session?: Awaited<ReturnType<typeof getServerSession>> } }).auth
+  const session = contextAuth?.session ?? await getServerSession(event)
 
   if (!isAdmin(session)) {
     throw createError({ statusCode: 403, statusMessage: 'Forbidden' })
@@ -136,7 +134,7 @@ export default defineEventHandler(async (event) => {
   let system: AdminWingsNodeDetail['system'] = null
   let systemError: string | null = null
   try {
-    system = await remoteGetSystemInformation(id)
+    system = await remoteGetSystemInformation(id, 2)
   }
   catch (error) {
     if (isH3Error(error)) {

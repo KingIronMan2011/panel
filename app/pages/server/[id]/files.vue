@@ -23,9 +23,12 @@ const filePending = ref(false)
 const fileError = ref<Error | null>(null)
 const dirtyFiles = reactive(new Set<string>())
 const fileSaving = ref(false)
+const isSavingFile = ref(false)
 const fileUploadInput = ref<HTMLInputElement | null>(null)
 const uploadInProgress = ref(false)
 const pullInProgress = ref(false)
+
+let currentFileRequest: AbortController | null = null
 
 const newFileModal = reactive({
   open: false,
@@ -975,39 +978,144 @@ const editorLanguage = computed(() => languageInfo.value.lang)
 const editorLanguageLabel = computed(() => languageInfo.value.label)
 
 watch(selectedFile, async (file, previous) => {
-  if (previous?.path)
+  if (isSavingFile.value || fileSaving.value) {
+    console.log('[Files Watch] Save in progress, skipping reload')
+    return
+  }
+  
+  if (file && file.path === previous?.path && file.type === previous?.type) {
+    console.log('[Files Watch] File path unchanged, skipping reload:', file.path)
+    return
+  }
+  
+  if (previous?.path && dirtyFiles.has(previous.path)) {
+    console.log('[Files Watch] Previous file has unsaved changes, skipping reload to preserve edits')
+  }
+  
+  if (currentFileRequest) {
+    currentFileRequest.abort()
+    currentFileRequest = null
+  }
+
+  if (previous?.path && previous.path !== file?.path)
     dirtyFiles.delete(previous.path)
 
   if (!file || file.type !== 'file') {
     editorValue.value = ''
     fileError.value = null
+    filePending.value = false
     return
   }
+  
+  if (file.path === previous?.path && dirtyFiles.has(file.path) && editorValue.value) {
+    console.log('[Files Watch] File has unsaved changes, skipping reload to preserve edits:', file.path)
+    return
+  }
+  
+  console.log('[Files Watch] Loading file content:', file.path)
+
+  const abortController = new AbortController()
+  currentFileRequest = abortController
 
   filePending.value = true
   fileError.value = null
+  editorValue.value = ''
 
   try {
-    const { data } = await $fetch<{ data: { path: string; content: string } }>(`/api/servers/${serverId.value}/files/content`, {
+    const url = `/api/servers/${serverId.value}/files-content`
+    
+    const response = await $fetch<{ data: { path: string; content: string } }>(url, {
       query: { file: file.path },
+      headers: {
+        'Accept': 'application/json',
+      },
+      signal: abortController.signal, 
     })
 
-    editorValue.value = data.content
+    if (abortController.signal.aborted) {
+      return
+    }
+
+    if (selectedFile.value?.path !== file.path) {
+      return
+    }
+    
+    if (!response || !response.data) {
+      throw new Error('Invalid response from server: missing data')
+    }
+
+    const fileData = response.data
+    
+    if (selectedFile.value?.path === file.path) {
+      editorValue.value = fileData.content || ''
+      fileError.value = null
+    }
   }
   catch (error) {
-    fileError.value = error instanceof Error ? error : new Error('Unable to load file contents.')
-    editorValue.value = ''
+    if (error instanceof Error && error.name === 'AbortError') {
+      return
+    }
+
+    if (selectedFile.value?.path !== file.path) {
+      return
+    }
+    
+    let errorMessage = 'Unable to load file contents. Please check the server console for details.'
+    
+    if (error && typeof error === 'object') {
+      if ('data' in error && error.data) {
+        if (typeof error.data === 'object' && 'message' in error.data) {
+          errorMessage = String(error.data.message)
+        }
+        else if (typeof error.data === 'string') {
+          errorMessage = error.data
+        }
+      }
+      if ('message' in error && error.message) {
+        errorMessage = String(error.message)
+      }
+      else if ('statusMessage' in error && error.statusMessage) {
+        errorMessage = String(error.statusMessage)
+      }
+      else if ('statusText' in error && error.statusText) {
+        errorMessage = String(error.statusText)
+      }
+    }
+    else if (typeof error === 'string' && error) {
+      errorMessage = error
+    }
+    
+    if (!errorMessage || errorMessage.trim().length === 0 || errorMessage === '1') {
+      errorMessage = 'Unable to load file contents. The server may be offline or the file may not exist.'
+    }
+    
+    if (selectedFile.value?.path === file.path) {
+      fileError.value = new Error(errorMessage)
+      editorValue.value = ''
+    }
   }
   finally {
-    filePending.value = false
+    if (currentFileRequest === abortController) {
+      filePending.value = false
+      currentFileRequest = null
+    }
   }
 })
 
-watch(editorValue, (value) => {
+watch(editorValue, (value, previousValue) => {
   const file = selectedFile.value
   if (file?.type === 'file') {
-    if (value !== undefined)
+    if (value !== undefined && value !== previousValue) {
       dirtyFiles.add(file.path)
+      console.log('[Files Watch] Editor value changed, marking as dirty:', file.path)
+    }
+  }
+}, { flush: 'post' }) 
+
+onUnmounted(() => {
+  if (currentFileRequest) {
+    currentFileRequest.abort()
+    currentFileRequest = null
   }
 })
 
@@ -1034,36 +1142,170 @@ function resetEditor() {
   selectedFile.value = { ...file }
 }
 
-async function saveEditor() {
+async function saveEditor(event?: Event) {
+  if (event) {
+    event.preventDefault()
+    event.stopPropagation()
+  }
+  
+  console.log('[Files Save] saveEditor() called!', {
+    hasSelectedFile: !!selectedFile.value,
+    fileType: selectedFile.value?.type,
+    filePath: selectedFile.value?.path,
+    editorValueLength: editorValue.value?.length,
+    fileSaving: fileSaving.value,
+    isEditorDirty: isEditorDirty.value,
+  })
+  
   const file = selectedFile.value
-  if (!file || file.type !== 'file')
+  if (!file || file.type !== 'file') {
+    console.warn('[Files Save] No file selected or not a file', { file, type: file?.type })
     return
+  }
+  
+  if (!isEditorDirty.value) {
+    console.warn('[Files Save] No changes to save')
+    return
+  }
+  
+  if (fileSaving.value) {
+    console.warn('[Files Save] Save already in progress')
+    return
+  }
+
+  const content = editorValue.value || ''
+  console.log('[Files Save] Starting save...', { 
+    filePath: file.path, 
+    contentLength: content.length,
+    serverId: serverId.value,
+    url: `/api/servers/${serverId.value}/files/write`,
+  })
 
   try {
     fileSaving.value = true
-    await $fetch(`/api/servers/${serverId.value}/files/write`, {
+    isSavingFile.value = true
+    
+    const url = `/api/servers/${serverId.value}/files/write`
+    const body = {
+      file: file.path,
+      content: content,
+    }
+    
+    console.log('[Files Save] Sending POST request:', { 
+      url, 
+      body: { file: body.file, contentLength: body.content.length },
       method: 'POST',
-      body: {
-        file: file.path,
-        content: editorValue.value,
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
       },
     })
+    
+    console.log('[Files Save] About to call $fetch...')
+    console.log('[Files Save] Full request details:', {
+      url,
+      method: 'POST',
+      bodyKeys: Object.keys(body),
+      bodyFile: body.file,
+      bodyContentPreview: body.content?.substring(0, 100),
+      bodyContentLength: body.content?.length,
+    })
+    
+    let response
+    try {
+      console.log('[Files Save] Calling $fetch now...')
+      const startTime = Date.now()
+      
+      console.log('[Files Save] Network request starting:', {
+        url: new URL(url, window.location.origin).href,
+        method: 'POST',
+        bodySize: JSON.stringify(body).length,
+      })
+      
+      response = await $fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body,
+      })
+      const duration = Date.now() - startTime
+      console.log('[Files Save] $fetch completed successfully in', duration, 'ms')
+      
+      if (typeof response === 'string' && response.includes('<!DOCTYPE html>')) {
+        console.error('[Files Save] CRITICAL: Received HTML instead of JSON! Route not matching!')
+        console.error('[Files Save] This means the route handler is NOT being called by Nitro')
+        console.error('[Files Save] Response preview:', response.substring(0, 500))
+        throw new Error('Route not found - received HTML instead of JSON. The API endpoint may not be registered. Please restart the dev server.')
+      }
+      
+      console.log('[Files Save] Response type:', typeof response)
+      console.log('[Files Save] Response:', response)
+    } catch (err) {
+      console.error('[Files Save] $fetch error:', {
+        error: err,
+        errorType: typeof err,
+        errorMessage: err instanceof Error ? err.message : String(err),
+        errorStack: err instanceof Error ? err.stack : undefined,
+        errorName: err instanceof Error ? err.name : undefined,
+        url,
+        bodyKeys: Object.keys(body),
+        bodyFile: body.file,
+        bodyContentLength: body.content?.length,
+      })
+      throw err
+    }
 
+    console.log('[Files Save] Success! Response:', response)
     dirtyFiles.delete(file.path)
+    
     toast.add({
       title: 'Saved',
       description: `${file.name} saved successfully.`,
     })
+    
+    // Don't reload the file - the content is already what we saved
+    // Only reload if we need to verify it was saved correctly
+    // (which we can do manually if needed)
   }
   catch (error) {
+    console.error('[Files Save] Error:', {
+      error,
+      errorType: typeof error,
+      errorMessage: error instanceof Error ? error.message : String(error),
+      errorKeys: error && typeof error === 'object' ? Object.keys(error) : [],
+      errorString: String(error),
+    })
+    
+    let errorMessage = 'Unable to save file contents.'
+    if (error && typeof error === 'object') {
+      if ('data' in error && error.data) {
+        if (typeof error.data === 'object' && 'message' in error.data) {
+          errorMessage = String(error.data.message)
+        } else if (typeof error.data === 'string') {
+          errorMessage = error.data
+        }
+      }
+      if ('message' in error && error.message) {
+        errorMessage = String(error.message)
+      }
+    } else if (typeof error === 'string') {
+      errorMessage = error
+    }
+    
     toast.add({
       color: 'error',
       title: 'Failed to save file',
-      description: error instanceof Error ? error.message : 'Unable to save file contents.',
+      description: errorMessage,
     })
   }
   finally {
     fileSaving.value = false
+    await nextTick()
+    setTimeout(() => {
+      isSavingFile.value = false
+    }, 100)
   }
 }
 
@@ -1196,7 +1438,7 @@ const isEditorDirty = computed(() => {
                   <span class="w-32 text-right">Last modified</span>
                   <span class="w-8 text-right">Actions</span>
                 </div>
-                <div class="max-h-[28rem] overflow-y-auto">
+                <div class="max-h-112 overflow-y-auto">
                   <div v-if="directoryPending" class="space-y-2 p-3 text-xs text-muted-foreground">
                     <div v-for="index in 5" :key="index" class="h-5 animate-pulse rounded bg-muted/60"/>
                   </div>
@@ -1230,13 +1472,12 @@ const isEditorDirty = computed(() => {
                       {{ entry.type }}
                     </span>
                     <span class="w-32 text-right text-xs text-muted-foreground">{{ entry.modified }}</span>
-                    <UDropdown
+                    <UDropdownMenu
                       v-if="entry.type === 'file'"
-                      class="flex w-8 justify-end"
                       :items="availableFileActions(entry).map(action => ({ label: action.label, icon: action.icon, click: action.onClick }))"
                     >
                       <UButton icon="i-lucide-ellipsis-vertical" variant="ghost" size="xs" color="neutral" />
-                    </UDropdown>
+                    </UDropdownMenu>
                   </div>
                 </div>
               </div>
@@ -1316,7 +1557,7 @@ const isEditorDirty = computed(() => {
               </Transition>
             </div>
 
-            <div class="flex min-h-[28rem] flex-1 flex-col gap-4">
+            <div class="flex min-h-112 flex-1 flex-col gap-4">
               <header class="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <p class="text-xs uppercase text-muted-foreground">Editing</p>
@@ -1336,8 +1577,9 @@ const isEditorDirty = computed(() => {
                   v-if="fileError"
                   color="error"
                   icon="i-lucide-alert-circle"
+                  title="Error loading file"
                 >
-                  {{ fileError.message }}
+                  {{ fileError?.message || fileError?.toString() || 'Failed to load file contents' }}
                 </UAlert>
 
                 <div class="relative flex-1 overflow-hidden rounded-md border border-default/80">
@@ -1345,7 +1587,30 @@ const isEditorDirty = computed(() => {
                     <span class="text-sm text-muted-foreground">Loading file…</span>
                   </div>
                   <ClientOnly>
-                    <MonacoEditor v-model="editorValue" :lang="editorLanguage" :options="{ automaticLayout: true, readOnly: filePending }" class="h-full" />
+                    <template #default>
+                      <MonacoEditor
+                        v-if="selectedFile && !filePending"
+                        :key="selectedFile.path"
+                        v-model="editorValue"
+                        :lang="editorLanguage"
+                        :options="{
+                          automaticLayout: true,
+                          readOnly: filePending,
+                          minimap: { enabled: true },
+                          fontSize: 14,
+                          lineNumbers: 'on',
+                          scrollBeyondLastLine: false,
+                          wordWrap: 'on',
+                          tabSize: 2,
+                        }"
+                        class="h-full"
+                      />
+                    </template>
+                    <template #fallback>
+                      <div class="flex h-full items-center justify-center">
+                        <UIcon name="i-lucide-loader-2" class="size-8 animate-spin text-primary" />
+                      </div>
+                    </template>
                   </ClientOnly>
                 </div>
 
@@ -1353,7 +1618,13 @@ const isEditorDirty = computed(() => {
                   <UButton icon="i-lucide-rotate-ccw" variant="ghost" color="neutral" :disabled="!isEditorDirty || fileSaving" @click="resetEditor">
                     Reset changes
                   </UButton>
-                  <UButton icon="i-lucide-save" :loading="fileSaving" :disabled="!isEditorDirty" @click="saveEditor">
+                  <UButton 
+                    type="button"
+                    icon="i-lucide-save" 
+                    :loading="fileSaving" 
+                    :disabled="!isEditorDirty || fileSaving" 
+                    @click="saveEditor"
+                  >
                     Save changes
                   </UButton>
                 </div>
@@ -1373,9 +1644,9 @@ const isEditorDirty = computed(() => {
   <UModal v-model:open="renameModal.open" title="Rename file" :ui="{ footer: 'justify-end gap-2' }">
     <template #body>
       <UForm class="space-y-4" @submit.prevent="submitRename">
-        <UFormGroup label="New name" required>
+        <UFormField label="New name" name="newName" required>
           <UInput v-model="renameModal.value" placeholder="Enter new file name" autofocus />
-        </UFormGroup>
+        </UFormField>
         <div class="flex justify-end gap-2">
           <UButton variant="ghost" color="neutral" :disabled="renameModal.loading" @click="closeRenameModal">
             Cancel
@@ -1408,9 +1679,9 @@ const isEditorDirty = computed(() => {
   <UModal v-model:open="chmodModal.open" title="Change permissions" :ui="{ footer: 'justify-end gap-2' }">
     <template #body>
       <UForm class="space-y-4" @submit.prevent="submitChmod">
-        <UFormGroup label="File mode" help="Provide a numeric mode, e.g. 644 or 755" required>
+        <UFormField label="File mode" name="fileMode" help="Provide a numeric mode, e.g. 644 or 755" required>
           <UInput v-model="chmodModal.value" placeholder="755" autofocus />
-        </UFormGroup>
+        </UFormField>
         <div class="flex justify-end gap-2">
           <UButton variant="ghost" color="neutral" :disabled="chmodModal.loading" @click="closeChmodModal">
             Cancel
@@ -1426,9 +1697,9 @@ const isEditorDirty = computed(() => {
   <UModal v-model:open="pullModal.open" title="Pull from URL" :ui="{ footer: 'justify-end gap-2' }">
     <template #body>
       <UForm class="space-y-4" @submit.prevent="submitPull">
-        <UFormGroup label="File URL" help="The remote file will be downloaded into the current directory" required>
+        <UFormField label="File URL" name="fileUrl" help="The remote file will be downloaded into the current directory" required>
           <UInput v-model="pullModal.url" type="url" placeholder="https://example.com/file.zip" autofocus />
-        </UFormGroup>
+        </UFormField>
         <div class="flex justify-end gap-2">
           <UButton variant="ghost" color="neutral" :disabled="pullModal.loading" @click="closePullModal">
             Cancel
@@ -1453,9 +1724,9 @@ const isEditorDirty = computed(() => {
         </div>
 
         <UForm class="space-y-4" @submit.prevent="submitBulkMove">
-          <UFormGroup label="Destination directory" help="Enter the path where the selected items should be moved." required>
+          <UFormField label="Destination directory" name="destination" help="Enter the path where the selected items should be moved." required>
             <UInput v-model="bulkMoveModal.destination" placeholder="/path/to/destination" :disabled="bulkMoveModal.loading" />
-          </UFormGroup>
+          </UFormField>
           <div class="flex justify-end gap-2">
             <UButton variant="ghost" color="neutral" :disabled="bulkMoveModal.loading" @click="closeBulkMoveModal">
               Cancel

@@ -42,15 +42,27 @@ export default defineEventHandler(async (event) => {
       const { client } = await getWingsClientForServer(server.uuid)
       await client.deleteServer(server.uuid)
     } catch (error) {
-      console.error('Failed to delete server from Wings:', error)
-      if (!force) {
-        throw createError({
-          statusCode: 500,
-          message: 'Failed to delete server from node. Use force=true to delete anyway.',
-        })
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      const isNotFound = errorMessage.includes('404') || errorMessage.includes('does not exist')
+      
+      if (isNotFound) {
+        console.log(`Server ${server.uuid} does not exist on Wings, continuing with database deletion`)
+      } else {
+        console.error('Failed to delete server from Wings:', error)
+        if (!force) {
+          throw createError({
+            statusCode: 500,
+            message: 'Failed to delete server from node. Use force=true to delete anyway.',
+          })
+        }
       }
     }
   }
+
+  db.update(tables.servers)
+    .set({ allocationId: null })
+    .where(eq(tables.servers.id, serverId))
+    .run()
 
   db.delete(tables.serverLimits)
     .where(eq(tables.serverLimits.serverId, serverId))

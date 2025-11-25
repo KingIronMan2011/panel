@@ -1,5 +1,6 @@
 import { useDrizzle, tables, eq } from '~~/server/utils/drizzle'
 import { getWingsClientForServer, getWingsClient, WingsConnectionError, WingsAuthError } from '~~/server/utils/wings-client'
+import { debugLog, debugError, debugWarn } from '~~/server/utils/logger'
 import type { ServerResourceStats, NodeResourceStats, NodeHealthStatus } from '#shared/types/server'
 
 export class ResourceMonitor {
@@ -7,9 +8,9 @@ export class ResourceMonitor {
   private monitoringInterval: NodeJS.Timeout | null = null
   private isMonitoring = false
 
-  async getServerResources(serverId: string): Promise<ServerResourceStats | null> {
+  async getServerResources(serverUuid: string): Promise<ServerResourceStats | null> {
     try {
-      const { client, server } = await getWingsClientForServer(serverId)
+      const { client, server } = await getWingsClientForServer(serverUuid)
       const details = await client.getServerResources(server.uuid as string)
 
       return {
@@ -27,7 +28,12 @@ export class ResourceMonitor {
         lastUpdated: new Date(),
       }
     } catch (error) {
-      console.error(`Failed to get resources for server ${serverId}:`, error)
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      if (errorMessage.includes('Server not found') || errorMessage.includes('not found')) {
+        debugWarn(`Server ${serverUuid} not found, skipping resource collection`)
+      } else {
+        debugError(`Failed to get resources for server ${serverUuid}:`, error)
+      }
       return null
     }
   }
@@ -153,7 +159,11 @@ export class ResourceMonitor {
     const resources: ServerResourceStats[] = []
 
     for (const server of servers) {
-      const stats = await this.getServerResources(server.id)
+      if (!server.uuid) {
+        debugWarn(`Server ${server.id} has no UUID, skipping resource collection`)
+        continue
+      }
+      const stats = await this.getServerResources(server.uuid)
       if (stats) {
         resources.push(stats)
       }
@@ -180,18 +190,18 @@ export class ResourceMonitor {
 
   startMonitoring(intervalMs: number = 30000): void {
     if (this.isMonitoring) {
-      console.log('Resource monitoring is already running')
+      debugLog('Resource monitoring is already running')
       return
     }
 
     this.isMonitoring = true
-    console.log(`Starting resource monitoring with ${intervalMs}ms interval`)
+    debugLog(`Starting resource monitoring with ${intervalMs}ms interval`)
 
     this.monitoringInterval = setInterval(async () => {
       try {
         await this.collectAllResources()
       } catch (error) {
-        console.error('Resource monitoring cycle failed:', error)
+        debugError('Resource monitoring cycle failed:', error)
       }
     }, intervalMs)
   }
@@ -202,7 +212,7 @@ export class ResourceMonitor {
       this.monitoringInterval = null
     }
     this.isMonitoring = false
-    console.log('Resource monitoring stopped')
+    debugLog('Resource monitoring stopped')
   }
 
   private async collectAllResources(): Promise<void> {
@@ -210,17 +220,17 @@ export class ResourceMonitor {
     
     try {
       const serverResources = await this.getAllServerResources()
-      console.log(`Collected resources for ${serverResources.length} servers`)
+      debugLog(`Collected resources for ${serverResources.length} servers`)
 
       const nodeResources = await this.getAllNodeResources()
       const onlineNodes = nodeResources.filter(node => node.status === 'online' || node.status === 'maintenance')
       const offlineNodes = nodeResources.filter(node => node.status === 'offline')
 
-      console.log(`Collected resources for ${nodeResources.length} nodes (${onlineNodes.length} online, ${offlineNodes.length} offline)`)
+      debugLog(`Collected resources for ${nodeResources.length} nodes (${onlineNodes.length} online, ${offlineNodes.length} offline)`)
 
       if (offlineNodes.length > 0) {
         for (const offline of offlineNodes) {
-          console.warn(`Node ${offline.nodeId} is offline: ${offline.message ?? 'unknown issue'}`)
+          debugWarn(`Node ${offline.nodeId} is offline: ${offline.message ?? 'unknown issue'}`)
         }
       }
 
@@ -247,10 +257,10 @@ export class ResourceMonitor {
       }
 
       const duration = Date.now() - startTime
-      console.log(`Resource collection completed in ${duration}ms`)
+      debugLog(`Resource collection completed in ${duration}ms`)
 
     } catch (error) {
-      console.error('Failed to collect resources:', error)
+      debugError('Failed to collect resources:', error)
     }
   }
 

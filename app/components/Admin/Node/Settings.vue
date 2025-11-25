@@ -74,7 +74,7 @@ async function handleSubmit(event: FormSubmitEvent<FormSchema>) {
 
   try {
     await $fetch(`/api/admin/wings/nodes/${props.node.id}`, {
-      method: 'PATCH',
+      method: 'patch',
       body: event.data,
     })
 

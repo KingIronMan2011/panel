@@ -10,7 +10,7 @@ export default defineEventHandler(async (event) => {
 
   const query = getQuery(event)
   const versionParam = typeof query.v === 'string' ? Number.parseInt(query.v, 10) : undefined
-  const version = Number.isFinite(versionParam ?? NaN) ? versionParam : undefined
+  const version = Number.isFinite(versionParam ?? NaN) ? versionParam : 2
 
   const systemInfo = await remoteGetSystemInformation(id, version)
   return { data: systemInfo }

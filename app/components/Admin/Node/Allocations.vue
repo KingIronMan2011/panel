@@ -13,17 +13,27 @@ const pageSize = ref(50)
 const filter = ref<'all' | 'assigned' | 'unassigned'>('all')
 const isCreating = ref(false)
 
-const {
-  data: allocationsData,
-  pending,
-  refresh,
-} = await useFetch<{ data: Allocation[] }>(`/api/admin/nodes/${props.nodeId}/allocations`, {
-  key: `node-allocations-${props.nodeId}`,
-  transform: (response) => response.data ?? [],
-  default: () => [],
-})
+const allocationsData = ref<{ data: Allocation[] } | null>(null)
+const pending = ref(false)
 
-const allocations = computed<Allocation[]>(() => allocationsData.value ?? [])
+async function loadAllocations() {
+  pending.value = true
+  try {
+    const response = await $fetch(`/api/admin/nodes/${props.nodeId}/allocations`) as any
+    allocationsData.value = response as { data: Allocation[] }
+  } catch (error) {
+    console.error('Failed to load allocations:', error)
+    allocationsData.value = { data: [] }
+  } finally {
+    pending.value = false
+  }
+}
+
+await loadAllocations()
+
+const refresh = () => loadAllocations()
+
+const allocations = computed<Allocation[]>(() => allocationsData.value?.data ?? [])
 
 const filteredAllocations = computed(() => {
   if (filter.value === 'assigned') {
@@ -44,7 +54,20 @@ const paginatedAllocations = computed(() => {
 const _totalPages = computed(() => Math.ceil(filteredAllocations.value.length / pageSize.value))
 
 const createSchema = z.object({
-  ip: z.string().trim().min(1, 'IP address is required').max(255),
+  ip: z.string().trim().min(1, 'IP address or CIDR notation is required').refine((val) => {
+    if (!val) return false
+    const parts = val.split('/')
+    if (parts.length === 1) {
+      const ipRegex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/
+      return ipRegex.test(val)
+    }
+    if (parts.length === 2) {
+      const ipRegex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/
+      const prefix = Number.parseInt(parts[1]!, 10)
+      return ipRegex.test(parts[0]!) && Number.isFinite(prefix) && prefix >= 25 && prefix <= 32
+    }
+    return false
+  }, 'Invalid IP address or CIDR notation (must be /25 to /32)'),
   ports: z.string().trim().min(1, 'Provide at least one port'),
   ipAlias: z.string().trim().max(255).optional(),
 })
@@ -62,6 +85,9 @@ function parsePorts(input: string): number[] {
   const normalized = input.replace(/\s+/g, '')
   if (normalized.includes('-')) {
     const [startRaw, endRaw] = normalized.split('-', 2)
+    if (!startRaw || !endRaw) {
+      throw new Error('Invalid port range format')
+    }
     const start = Number.parseInt(startRaw, 10)
     const end = Number.parseInt(endRaw, 10)
     if (!Number.isFinite(start) || !Number.isFinite(end) || start <= 0 || end <= 0 || start > end)
@@ -92,6 +118,17 @@ async function createAllocations(event: FormSubmitEvent<CreateFormSchema>) {
 
   try {
     const ports = parsePorts(event.data.ports)
+    const isCidr = event.data.ip.includes('/')
+    const estimatedCount = isCidr 
+      ? Math.pow(2, 32 - Number.parseInt(event.data.ip.split('/')[1]!, 10)) * ports.length
+      : ports.length
+
+    if (estimatedCount > 10000) {
+      if (!confirm(`This will create approximately ${estimatedCount.toLocaleString()} allocations. Continue?`)) {
+        isCreating.value = false
+        return
+      }
+    }
 
     await $fetch(`/api/admin/nodes/${props.nodeId}/allocations`, {
       method: 'POST',
@@ -104,7 +141,7 @@ async function createAllocations(event: FormSubmitEvent<CreateFormSchema>) {
 
     toast.add({
       title: 'Allocations created',
-      description: `Created ${ports.length} allocation${ports.length === 1 ? '' : 's'}`,
+      description: `Created allocations for ${event.data.ip} with ${ports.length} port${ports.length === 1 ? '' : 's'}`,
       color: 'success',
     })
 
@@ -138,7 +175,7 @@ async function updateAlias(allocation: Allocation, newAlias: string) {
   updatingAlias.value = allocation.id
   try {
     await $fetch(`/api/admin/allocations/${allocation.id}`, {
-      method: 'PATCH',
+      method: 'patch',
       body: { ipAlias: newAlias || null },
     })
 
@@ -185,7 +222,7 @@ async function deleteAllocation(allocation: Allocation) {
   }
 }
 
-const columns: Array<{ key: string, label: string }> = [
+const columns: any[] = [
   { key: 'ip', label: 'IP Address' },
   { key: 'ipAlias', label: 'IP Alias' },
   { key: 'port', label: 'Port' },
@@ -221,27 +258,27 @@ const unassignedCount = computed(() => allocations.value.filter(a => a.serverId 
     <UCard>
       <UTable :rows="paginatedAllocations" :columns="columns" :loading="pending">
         <template #ip-data="{ row }">
-          <code class="text-sm">{{ row.ip }}</code>
+          <code class="text-sm">{{ (row as unknown as Allocation).ip }}</code>
         </template>
 
         <template #ipAlias-data="{ row }">
           <UInput 
-            :model-value="row.ipAlias || ''" 
+            :model-value="(row as unknown as Allocation).ipAlias || ''" 
             placeholder="none" 
             size="sm"
-            :loading="updatingAlias === row.id"
-            @blur="handleAliasBlur(row, $event)" 
+            :loading="updatingAlias === (row as unknown as Allocation).id"
+            @blur="handleAliasBlur(row as unknown as Allocation, $event)" 
           />
         </template>
 
         <template #port-data="{ row }">
-          <code class="text-sm">{{ row.port }}</code>
+          <code class="text-sm">{{ (row as unknown as Allocation).port }}</code>
         </template>
 
         <template #server-data="{ row }">
           <NuxtLink 
-            v-if="row.serverId"
-            :to="`/admin/servers/${row.serverId}`" 
+            v-if="(row as unknown as Allocation).serverId"
+            :to="`/admin/servers/${(row as unknown as Allocation).serverId}`" 
             class="text-primary hover:underline"
           >
             Server
@@ -251,12 +288,12 @@ const unassignedCount = computed(() => allocations.value.filter(a => a.serverId 
 
         <template #actions-data="{ row }">
           <UButton 
-            v-if="!row.serverId" 
+            v-if="!(row as unknown as Allocation).serverId" 
             icon="i-lucide-trash-2" 
             color="error" 
             variant="ghost"
             size="sm" 
-            @click="deleteAllocation(row)" 
+            @click="deleteAllocation(row as unknown as Allocation)" 
           />
         </template>
       </UTable>
@@ -279,25 +316,29 @@ const unassignedCount = computed(() => allocations.value.filter(a => a.serverId 
         </template>
 
         <UForm
+          id="create-allocation-form"
           :schema="createSchema"
           :state="createForm"
           class="space-y-4"
           :disabled="isCreating"
-          validate-on="input"
+          :validate-on="['input']"
           @submit="createAllocations"
         >
           <UAlert icon="i-lucide-info">
             <template #title>Bulk Creation</template>
             <template #description>
-              You can create multiple allocations at once by specifying a port range (e.g., 25565-25665) or
-              comma-separated ports (e.g., 25565,25566,25567).
+              <ul class="list-disc list-inside space-y-1 text-sm">
+                <li>IP addresses: Use CIDR notation (e.g., <code>192.168.1.0/24</code>) to create multiple IPs, or a single IP (e.g., <code>192.168.1.1</code>)</li>
+                <li>Ports: Use a range (e.g., <code>25565-25665</code>) or comma-separated list (e.g., <code>25565,25566,25567</code>)</li>
+                <li>CIDR ranges must be between /25 and /32</li>
+              </ul>
             </template>
           </UAlert>
 
-          <UFormField label="IP Address" name="ip" required>
-            <UInput v-model="createForm.ip" placeholder="0.0.0.0" />
+          <UFormField label="IP Address or CIDR" name="ip" required>
+            <UInput v-model="createForm.ip" placeholder="192.168.1.0/24 or 192.168.1.1" />
             <template #help>
-              The IP address to bind allocations to
+              Single IP address (e.g., 192.168.1.1) or CIDR notation (e.g., 192.168.1.0/24) to create multiple IPs
             </template>
           </UFormField>
 
@@ -321,7 +362,13 @@ const unassignedCount = computed(() => allocations.value.filter(a => a.serverId 
             <UButton variant="ghost" :disabled="isCreating" @click="showCreateModal = false">
               Cancel
             </UButton>
-            <UButton color="primary" :loading="isCreating" :disabled="isCreating" @click="createAllocations">
+            <UButton 
+              type="submit" 
+              form="create-allocation-form"
+              color="primary" 
+              :loading="isCreating" 
+              :disabled="isCreating"
+            >
               Create Allocations
             </UButton>
           </div>

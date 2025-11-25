@@ -30,8 +30,7 @@ export default defineEventHandler(async (event): Promise<AdminWingsNodeAllocatio
 
   const totalRow = db.select({ count: sql<number>`COUNT(*)` })
     .from(tables.serverAllocations)
-    .innerJoin(tables.servers, eq(tables.serverAllocations.serverId, tables.servers.id))
-    .where(eq(tables.servers.nodeId, id))
+    .where(eq(tables.serverAllocations.nodeId, id))
     .get()
 
   const rows = db.select({
@@ -40,13 +39,13 @@ export default defineEventHandler(async (event): Promise<AdminWingsNodeAllocatio
     port: tables.serverAllocations.port,
     isPrimary: tables.serverAllocations.isPrimary,
     createdAt: tables.serverAllocations.createdAt,
-    serverId: tables.servers.id,
+    serverId: tables.serverAllocations.serverId,
     serverName: tables.servers.name,
     serverIdentifier: tables.servers.identifier,
   })
     .from(tables.serverAllocations)
-    .innerJoin(tables.servers, eq(tables.serverAllocations.serverId, tables.servers.id))
-    .where(eq(tables.servers.nodeId, id))
+    .leftJoin(tables.servers, eq(tables.serverAllocations.serverId, tables.servers.id))
+    .where(eq(tables.serverAllocations.nodeId, id))
     .orderBy(desc(tables.serverAllocations.isPrimary), asc(tables.serverAllocations.ip), asc(tables.serverAllocations.port))
     .limit(perPage)
     .offset(offset)
@@ -57,9 +56,9 @@ export default defineEventHandler(async (event): Promise<AdminWingsNodeAllocatio
     ip: row.ip,
     port: row.port,
     isPrimary: Boolean(row.isPrimary),
-    serverId: row.serverId,
-    serverName: row.serverName,
-    serverIdentifier: row.serverIdentifier,
+    serverId: row.serverId ?? null,
+    serverName: row.serverName ?? '',
+    serverIdentifier: row.serverIdentifier ?? '',
   }))
 
   const total = totalRow?.count ?? 0

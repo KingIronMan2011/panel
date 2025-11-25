@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { join, resolve } from 'pathe'
 import Database from 'better-sqlite3'
 import { drizzle, type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3/driver'
-import { and, eq, or, inArray, isNull, lt } from 'drizzle-orm'
+import { and, eq, or, inArray, isNull, isNotNull, lt, desc } from 'drizzle-orm'
 import * as schema from '~~/server/database/schema'
 
 function findProjectRoot(startDir: string): string {
@@ -58,4 +58,4 @@ export function useDrizzle(): BetterSQLite3Database<typeof schema> {
 }
 
 export const tables = schema
-export { eq, and, or, inArray, isNull, lt }
+export { eq, and, or, inArray, isNull, isNotNull, lt, desc }

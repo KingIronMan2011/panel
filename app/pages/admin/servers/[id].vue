@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { Server } from '#shared/types/server'
+import type { AdminServerDetails } from '#shared/types/server'
 
 const route = useRoute()
 
@@ -13,14 +13,59 @@ definePageMeta({
 const serverId = computed(() => route.params.id as string)
 const tab = ref<'overview' | 'build' | 'startup' | 'database' | 'mounts' | 'manage'>('overview')
 
-const { data: serverData, pending, error } = await useFetch<{ data: Server }>(
+const { data: serverData, pending, error } = await useFetch<{ data: AdminServerDetails }>(
   () => `/api/admin/servers/${serverId.value}`,
   {
     key: () => `admin-server-${serverId.value}`,
     watch: [serverId],
+    onResponse({ response }) {
+      console.log('[Server Detail] Response received:', {
+        status: response.status,
+        statusText: response.statusText,
+        data: response._data,
+        hasData: !!response._data,
+        hasDataData: !!response._data?.data,
+      })
+    },
+    onRequestError({ error }) {
+      console.error('[Server Detail] Request error:', error)
+    },
+    onResponseError({ response }) {
+      console.error('[Server Detail] Response error:', {
+        status: response.status,
+        statusText: response.statusText,
+        data: response._data,
+      })
+    },
   },
 )
-const server = computed(() => serverData.value?.data)
+const server = computed(() => {
+  const s = serverData.value?.data
+  console.log('[Server Detail] Computed server value:', {
+    hasServerData: !!serverData.value,
+    hasData: !!serverData.value?.data,
+    server: s,
+    serverKeys: s ? Object.keys(s) : [],
+  })
+  return s
+})
+
+watch([serverData, error, server], ([data, err, srv]) => {
+  console.log('[Server Detail] Watch triggered:', {
+    hasData: !!data,
+    hasError: !!err,
+    hasServer: !!srv,
+    data: data,
+    error: err,
+    server: srv,
+  })
+  if (err) {
+    console.error('[Server Detail] Error loading server:', err)
+  }
+  if (data) {
+    console.log('[Server Detail] Server data received:', data)
+  }
+}, { immediate: true })
 
 function formatDate(date: string | Date | null) {
   if (!date) return 'Never'
@@ -42,6 +87,20 @@ function formatDate(date: string | Date | null) {
             <template #title>Unable to load server</template>
             <template #description>{{ (error as Error).message }}</template>
           </UAlert>
+
+          <UCard v-if="!pending && !error && !server" color="warning">
+            <template #header>
+              <h2 class="text-lg font-semibold">Debug: Server data not available</h2>
+            </template>
+            <div class="space-y-2 text-sm">
+              <p><strong>Pending:</strong> {{ pending }}</p>
+              <p><strong>Has Error:</strong> {{ !!error }}</p>
+              <p><strong>Has Server Data:</strong> {{ !!serverData }}</p>
+              <p><strong>Has Server:</strong> {{ !!server }}</p>
+              <p><strong>Server ID:</strong> {{ serverId }}</p>
+              <pre class="bg-gray-100 p-2 rounded text-xs overflow-auto">{{ JSON.stringify({ serverData, error, server }, null, 2) }}</pre>
+            </div>
+          </UCard>
 
           <template v-else-if="server">
             <header class="flex flex-wrap items-center justify-between gap-4">

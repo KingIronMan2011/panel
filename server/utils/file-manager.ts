@@ -93,6 +93,7 @@ export class FileManager {
         { from: filename, to: backupFilename }
       ])
     } catch {
+      // Backup failed, continue with write operation
     }
 
     await client.writeFileContents(serverUuid, sanitizedPath, content)

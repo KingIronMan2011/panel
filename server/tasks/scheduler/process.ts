@@ -3,6 +3,7 @@ import { getWingsClientForServer } from '~~/server/utils/wings-client'
 import { serverManager } from '~~/server/utils/server-manager'
 import { backupManager } from '~~/server/utils/backup-manager'
 import { recordAuditEvent } from '~~/server/utils/audit'
+import { debugLog, debugError } from '~~/server/utils/logger'
 
 function parseNextRun(cronExpression: string): Date {
   const now = new Date()
@@ -37,7 +38,7 @@ export default defineTask({
     const errors: string[] = []
 
     try {
-      console.log(`[${now.toISOString()}] Processing scheduled tasks...`)
+      debugLog(`[${now.toISOString()}] Processing scheduled tasks...`)
 
       const schedules = await db
         .select()
@@ -59,7 +60,7 @@ export default defineTask({
           }
         } catch (scheduleError) {
           const errorMsg = `Schedule ${schedule.id} failed: ${scheduleError instanceof Error ? scheduleError.message : 'Unknown error'}`
-          console.error(errorMsg)
+          debugError(errorMsg)
           errors.push(errorMsg)
         }
       }
@@ -72,7 +73,7 @@ export default defineTask({
         processedScheduleIds: processedSchedules,
       }
 
-      console.log(`[${now.toISOString()}] Task processing complete:`, result)
+      debugLog(`[${now.toISOString()}] Task processing complete:`, result)
       return { result }
 
     } catch (error) {
@@ -87,7 +88,7 @@ async function processSchedule(scheduleId: string, db: ReturnType<typeof useDriz
   const runningTasks = new Map<string, boolean>()
   
   if (runningTasks.has(scheduleId)) {
-    console.log(`Schedule ${scheduleId} is already running, skipping...`)
+    debugLog(`Schedule ${scheduleId} is already running, skipping...`)
     return
   }
 
@@ -113,7 +114,7 @@ async function processSchedule(scheduleId: string, db: ReturnType<typeof useDriz
       .all()
 
     if (tasks.length === 0) {
-      console.log(`No tasks found for schedule ${scheduleId}`)
+      debugLog(`No tasks found for schedule ${scheduleId}`)
       return
     }
 
@@ -127,26 +128,26 @@ async function processSchedule(scheduleId: string, db: ReturnType<typeof useDriz
       throw new Error('Server not found')
     }
 
-    console.log(`Executing ${tasks.length} tasks for schedule "${schedule.name}" on server ${server.uuid}`)
+    debugLog(`Executing ${tasks.length} tasks for schedule "${schedule.name}" on server ${server.uuid}`)
 
     let _allTasksSucceeded = true
 
     for (const task of tasks) {
       if (task.timeOffset > 0) {
-        console.log(`Waiting ${task.timeOffset}s before executing task ${task.id}`)
+        debugLog(`Waiting ${task.timeOffset}s before executing task ${task.id}`)
         await new Promise(resolve => setTimeout(resolve, task.timeOffset * 1000))
       }
 
       try {
         await executeTask(task, server, schedule)
-        console.log(`Task ${task.id} (${task.action}) completed successfully`)
+        debugLog(`Task ${task.id} (${task.action}) completed successfully`)
       } catch (taskError) {
         const errorMsg = `Task ${task.id} failed: ${taskError instanceof Error ? taskError.message : 'Unknown error'}`
         console.error(errorMsg)
         _allTasksSucceeded = false
 
         if (!task.continueOnFailure) {
-          console.log(`Task ${task.id} failed and continueOnFailure is false, stopping execution`)
+          debugLog(`Task ${task.id} failed and continueOnFailure is false, stopping execution`)
           break
         }
       }
@@ -164,7 +165,7 @@ async function processSchedule(scheduleId: string, db: ReturnType<typeof useDriz
       .where(eq(tables.serverSchedules.id, scheduleId))
       .run()
 
-    console.log(`Schedule ${scheduleId} completed. Next run: ${nextRun.toISOString()}`)
+    debugLog(`Schedule ${scheduleId} completed. Next run: ${nextRun.toISOString()}`)
 
   } finally {
     runningTasks.delete(scheduleId)
@@ -180,14 +181,14 @@ async function executeTask(
     case 'command': {
       const { client } = await getWingsClientForServer(server.uuid)
       await client.sendCommand(server.uuid, task.payload || '')
-      console.log(`Command executed on ${server.uuid}: ${task.payload}`)
+      debugLog(`Command executed on ${server.uuid}: ${task.payload}`)
       break
     }
 
     case 'power': {
       const powerAction = task.payload as 'start' | 'stop' | 'restart' | 'kill'
       await serverManager.powerAction(server.uuid, powerAction, { skipAudit: true })
-      console.log(`Power action executed on ${server.uuid}: ${powerAction}`)
+      debugLog(`Power action executed on ${server.uuid}: ${powerAction}`)
       break
     }
 
@@ -197,7 +198,7 @@ async function executeTask(
         name: backupName,
         skipAudit: true 
       })
-      console.log(`Backup created for ${server.uuid}: ${backupName}`)
+      debugLog(`Backup created for ${server.uuid}: ${backupName}`)
       break
     }
 

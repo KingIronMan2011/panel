@@ -1,6 +1,8 @@
 import { createError } from 'h3'
 import { getServerSession, isAdmin  } from '~~/server/utils/session'
-import { useDrizzle, tables } from '~~/server/utils/drizzle'
+import { useDrizzle, tables, eq, and } from '~~/server/utils/drizzle'
+import { parseCidr, parsePorts, CidrOutOfRangeError, InvalidIpAddressError } from '~~/server/utils/ip-utils'
+import { randomUUID } from 'node:crypto'
 
 export default defineEventHandler(async (event) => {
   const session = await getServerSession(event)
@@ -22,45 +24,106 @@ export default defineEventHandler(async (event) => {
   const body = await readBody(event)
   const { ip, ports, ipAlias } = body
 
-  if (!ip || !ports || !Array.isArray(ports)) {
+  if (!ip || typeof ip !== 'string') {
     throw createError({
       statusCode: 400,
-      message: 'IP and ports array are required',
+      message: 'IP address or CIDR notation is required',
+    })
+  }
+
+  if (!ports) {
+    throw createError({
+      statusCode: 400,
+      message: 'Ports are required (can be a range like 25565-25600 or comma-separated)',
+    })
+  }
+
+  let ipAddresses: string[]
+  try {
+    ipAddresses = parseCidr(ip)
+  } catch (error) {
+    if (error instanceof CidrOutOfRangeError) {
+      throw createError({
+        statusCode: 400,
+        message: error.message,
+      })
+    }
+    if (error instanceof InvalidIpAddressError) {
+      throw createError({
+        statusCode: 400,
+        message: error.message,
+      })
+    }
+    throw error
+  }
+
+  let portNumbers: number[]
+  try {
+    portNumbers = parsePorts(ports)
+  } catch (error) {
+    throw createError({
+      statusCode: 400,
+      message: error instanceof Error ? error.message : 'Invalid port format',
     })
   }
 
   const db = useDrizzle()
   const now = new Date()
-  const created = []
+  const created: Array<{ id: string; ip: string; port: number }> = []
+  const skipped: Array<{ ip: string; port: number }> = []
 
-  for (const port of ports) {
-    const id = `alloc_${nodeId}_${ip}_${port}_${Date.now()}`
+  for (const ipAddr of ipAddresses) {
+    for (const port of portNumbers) {
+      const existing = db.select()
+        .from(tables.serverAllocations)
+        .where(and(
+          eq(tables.serverAllocations.nodeId, nodeId),
+          eq(tables.serverAllocations.ip, ipAddr),
+          eq(tables.serverAllocations.port, port),
+        ))
+        .get()
 
-    try {
-      db.insert(tables.serverAllocations)
-        .values({
-          id,
-          nodeId,
-          serverId: null,
-          ip,
-          port,
-          ipAlias: ipAlias || null,
-          notes: null,
-          createdAt: now,
-          updatedAt: now,
-        })
-        .run()
+      if (existing) {
+        skipped.push({ ip: ipAddr, port })
+        continue
+      }
 
-      created.push({ id, ip, port })
-    } catch (error) {
+      const id = randomUUID()
+      try {
+        db.insert(tables.serverAllocations)
+          .values({
+            id,
+            nodeId,
+            serverId: null,
+            ip: ipAddr,
+            port,
+            ipAlias: ipAlias || null,
+            notes: null,
+            createdAt: now,
+            updatedAt: now,
+          })
+          .run()
 
-      console.error(`Failed to create allocation ${ip}:${port}`, error)
+        created.push({ id, ip: ipAddr, port })
+      } catch (error) {
+        console.error(`Failed to create allocation ${ipAddr}:${port}`, error)
+      }
     }
+  }
+
+  if (created.length === 0 && skipped.length > 0) {
+    throw createError({
+      statusCode: 409,
+      message: 'All specified allocations already exist',
+    })
   }
 
   return {
     success: true,
-    message: `Created ${created.length} allocations`,
-    data: created,
+    message: `Created ${created.length} allocation${created.length === 1 ? '' : 's'}${skipped.length > 0 ? `, skipped ${skipped.length} existing` : ''}`,
+    data: {
+      created,
+      skipped: skipped.length > 0 ? skipped : undefined,
+    },
   }
 })

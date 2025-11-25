@@ -261,6 +261,10 @@ export interface CreateServerPayload {
   cpu: number
   threads?: string
 
+  databases?: number
+  allocations?: number
+  backups?: number
+
   allocationId: string
   additionalAllocations?: string[]
 

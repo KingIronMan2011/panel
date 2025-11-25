@@ -32,12 +32,8 @@ export default defineEventHandler(async (event) => {
     })
   }
 
-  const db = useDrizzle()
-  const [server] = db.select()
-    .from(tables.servers)
-    .where(eq(tables.servers.id, serverId))
-    .limit(1)
-    .all()
+  const { findServerByIdentifier } = await import('~~/server/utils/serversStore')
+  const server = await findServerByIdentifier(serverId)
 
   if (!server) {
     throw createError({
@@ -49,17 +45,18 @@ export default defineEventHandler(async (event) => {
   const isOwner = server.ownerId === user.id
   const isAdmin = user.role === 'admin'
 
+  const db = useDrizzle()
   if (!isOwner && !isAdmin) {
-
     const [subuser] = await db.select()
       .from(tables.serverSubusers)
       .where(
         and(
-          eq(tables.serverSubusers.serverId, serverId),
+          eq(tables.serverSubusers.serverId, server.id),
           eq(tables.serverSubusers.userId, user.id),
         ),
       )
       .limit(1)
+      .all()
 
     if (!subuser) {
       throw createError({

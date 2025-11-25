@@ -11,10 +11,18 @@ const redisStorageConfig = {
 const authOrigin = process.env.BETTER_AUTH_URL
   || process.env.AUTH_ORIGIN
   || process.env.NUXT_AUTH_ORIGIN
+  || process.env.NUXT_PUBLIC_APP_URL
+  || process.env.APP_URL
   || 'http://localhost:3000'
 
 const appOrigin = process.env.NUXT_SECURITY_CORS_ORIGIN
   || authOrigin
+
+const allowedOrigins = process.env.NUXT_SECURITY_CORS_ORIGIN
+  ? [process.env.NUXT_SECURITY_CORS_ORIGIN]
+  : appOrigin === 'http://localhost:3000'
+    ? ['*'] // Dev - allow all
+    : [appOrigin, 'http://localhost:3000'] // Production - allow panel URL and localhost
 
 const extraConnectSources = process.env.NUXT_SECURITY_CONNECT_SRC
   ? process.env.NUXT_SECURITY_CONNECT_SRC.split(',').map(entry => entry.trim()).filter(Boolean)
@@ -53,14 +61,22 @@ export default defineNuxtConfig({
     '@nuxtjs/robots',
     '@pinia/nuxt',
     '@pinia/colada-nuxt',
+    'nuxt-monaco-editor',
   ],
+
+  monacoEditor: {
+    optimizeMonacoDeps: false, 
+    removeSourceMaps: true,
+  },
 
   runtimeConfig: {
     authOrigin,
     authSecret: process.env.BETTER_AUTH_SECRET || process.env.AUTH_SECRET || process.env.NUXT_AUTH_SECRET,
     redis: redisStorageConfig,
+    debug: process.env.DEBUG === 'true' || process.env.NUXT_DEBUG === 'true' || isDev,
     public: {
-      appName: process.env.NUXT_APP_NAME
+      appName: process.env.NUXT_APP_NAME,
+      debug: process.env.DEBUG === 'true' || process.env.NUXT_DEBUG === 'true' || isDev,
     },
   },
 
@@ -75,7 +91,8 @@ export default defineNuxtConfig({
       },
       corsHandler: {
         origin: '*',
-        methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE'],
+        methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+        credentials: true,
         preflight: { statusCode: 204 },
       },
       requestSizeLimiter: {
@@ -106,9 +123,9 @@ export default defineNuxtConfig({
           'frame-ancestors': ["'none'"],
           'upgrade-insecure-requests': true,
         },
-        crossOriginEmbedderPolicy: 'require-corp',
-        crossOriginOpenerPolicy: 'same-origin',
-        crossOriginResourcePolicy: 'same-origin',
+        crossOriginEmbedderPolicy: 'unsafe-none', 
+        crossOriginOpenerPolicy: 'same-origin-allow-popups', 
+        crossOriginResourcePolicy: 'cross-origin', 
         strictTransportSecurity: {
           maxAge: 31536000,
           includeSubdomains: true,
@@ -120,8 +137,9 @@ export default defineNuxtConfig({
         referrerPolicy: 'strict-origin-when-cross-origin',
       },
       corsHandler: {
-        origin: appOrigin,
-        methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE'],
+        origin: allowedOrigins.includes('*') ? '*' : allowedOrigins,
+        methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+        credentials: true,
         preflight: { statusCode: 204 },
       },
       requestSizeLimiter: {
@@ -141,18 +159,60 @@ export default defineNuxtConfig({
     head: {
       title: process.env.NUXT_APP_NAME,
       link: [{ rel: 'icon', type: 'image/x-icon', href: '/favicon.ico' }],
+      meta: [
+        // Remove Origin-Agent-Cluster header to fix the warning
+        { 'http-equiv': 'Origin-Agent-Cluster', content: '?0' },
+      ],
     },
   },
   site: { indexable: false },
   robots: {
     blockAiBots: true,
   },
+  routeRules: {
+    '/api/**': { ssr: false },
+    '/api/admin/servers/:id/build': { 
+      ssr: false,
+      prerender: false,
+    },
+    '/api/servers/:id/files/write': {
+      ssr: false,
+      prerender: false,
+    },
+    '/api/servers/:id/files': {
+      ssr: false,
+      prerender: false,
+    },
+  },
   nitro: {
     preset: 'node-server',
+    errorHandler: './server/error.ts',
     experimental: {
       tasks: true,
       websocket: true,
     },
+    handlers: [
+      {
+        route: '/api/admin/servers/:id/build',
+        method: 'patch',
+        handler: './server/api/admin/servers/[id]/build.patch.ts',
+      },
+      // CRITICAL: The files/write route MUST match exactly
+      // The route file is at: server/api/servers/[id]/files/write.post.ts
+      // This should auto-scan to: /api/servers/:id/files/write (POST)
+      // But we explicitly register it to ensure it matches
+      {
+        route: '/api/servers/:id/files/write',
+        method: 'post',
+        handler: './server/api/servers/[id]/files/write.post.ts',
+        lazy: true, 
+      },
+      {
+        route: '/api/servers/:id/files',
+        method: 'get',
+        handler: './server/api/servers/[id]/files.get.ts',
+      },
+    ],
     scheduledTasks: {
       // Run task every minute
       '* * * * *': ['scheduler:process'],

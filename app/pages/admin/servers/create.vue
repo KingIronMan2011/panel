@@ -45,7 +45,7 @@ const { data: nestsData } = await useAsyncData(
 
 const { data: nodesData } = await useAsyncData(
   'admin-nodes-for-server',
-  () => $fetch<{ data: NodeOption[] }>('/api/admin/nodes'),
+  () => $fetch<{ data: NodeOption[] }>('/api/wings/nodes'),
 )
 
 const { data: usersData } = await useAsyncData(
@@ -53,14 +53,63 @@ const { data: usersData } = await useAsyncData(
   () => $fetch<{ data: UserOption[] }>('/api/admin/users'),
 )
 
+const authStore = useAuthStore()
+const currentUser = computed(() => authStore.user)
+
 const nests = computed(() => nestsData.value?.data ?? [])
 const nodes = computed(() => nodesData.value?.data ?? [])
 const users = computed(() => usersData.value?.data ?? [])
+
+const nestSelectItems = computed(() => {
+  return nests.value.map((n: Nest) => ({
+    label: n.name,
+    value: n.id,
+  }))
+})
+
+const eggSelectItems = computed(() => {
+  return availableEggs.value.map((e: Egg) => ({
+    label: e.name,
+    value: e.id,
+  }))
+})
+
+const nodeSelectItems = computed(() => {
+  return nodes.value.map((n: NodeOption) => ({
+    label: n.name,
+    value: n.id,
+  }))
+})
+
+const allocationSelectItems = computed(() => {
+  return availableAllocations.value.map(alloc => ({
+    label: `${alloc.ip}:${alloc.port}`,
+    value: alloc.id,
+    description: `IP: ${alloc.ip} | Port: ${alloc.port}`,
+  }))
+})
+
+const userSelectItems = computed(() => {
+  return users.value.map((u: UserOption) => ({
+    label: u.username,
+    value: u.id,
+    description: u.email,
+  }))
+})
+
+watch(() => currentUser.value?.id, (userId) => {
+  if (userId && !form.value.ownerId) {
+    form.value.ownerId = userId
+  }
+}, { immediate: true })
 
 const selectedNest = ref<Nest | null>(null)
 const availableEggs = ref<Egg[]>([])
 const selectedEgg = ref<Egg | null>(null)
 const eggVariables = ref<EggVariable[]>([])
+
+const availableAllocations = ref<Array<{ id: string; ip: string; port: number }>>([])
+const isLoadingAllocations = ref(false)
 
 watch(() => form.value.nestId, async (nestId) => {
   if (!nestId) {
@@ -103,6 +152,33 @@ watch(() => form.value.eggId, async (eggId) => {
     console.error('Failed to load egg', err)
     selectedEgg.value = null
     eggVariables.value = []
+  }
+})
+
+watch(() => form.value.nodeId, async (nodeId) => {
+  if (!nodeId) {
+    availableAllocations.value = []
+    form.value.allocationId = ''
+    return
+  }
+
+  isLoadingAllocations.value = true
+  try {
+    const response = await $fetch<{ data: Array<{ id: string; ip: string; port: number; serverId: string | null; isPrimary: boolean }> }>(`/api/admin/wings/nodes/${nodeId}/allocations`, {
+      query: { perPage: 1000 },
+    })
+    availableAllocations.value = response.data
+      .filter(alloc => !alloc.serverId)
+      .map(alloc => ({
+        id: alloc.id,
+        ip: alloc.ip,
+        port: alloc.port,
+      }))
+  } catch (err) {
+    console.error('Failed to load allocations', err)
+    availableAllocations.value = []
+  } finally {
+    isLoadingAllocations.value = false
   }
 })
 
@@ -239,26 +315,52 @@ const stepTitles = [
             </UFormField>
 
             <UFormField label="Server Owner" name="ownerId" required>
-              <USelect v-model="form.ownerId" :options="users.map((u: any) => ({ label: u.username, value: u.id }))"
-                placeholder="Select owner" required />
+              <USelectMenu 
+                v-model="form.ownerId" 
+                :items="userSelectItems"
+                value-key="value"
+                placeholder="Search for a user..."
+                :search-input="{ placeholder: 'Search by username or email...' }"
+                :filter-fields="['label', 'description']"
+              >
+                <template #item-label="{ item }">
+                  <div class="flex flex-col">
+                    <span>{{ item.label }}</span>
+                    <span v-if="item.description" class="text-xs text-muted-foreground">{{ item.description }}</span>
+                  </div>
+                </template>
+              </USelectMenu>
               <template #help>
-                The user who will own this server
+                The user who will own this server. Defaults to your account.
               </template>
             </UFormField>
           </div>
 
           <div v-if="currentStep === 2" class="space-y-4">
             <UFormField label="Select Nest" name="nestId" required>
-              <USelect v-model="form.nestId" :options="nests.map((n: any) => ({ label: n.name, value: n.id }))"
-                placeholder="Select nest" required />
+              <USelect 
+                v-model="form.nestId" 
+                :items="nestSelectItems"
+                value-key="value"
+                placeholder="Select nest" 
+                required 
+                class="w-full"
+              />
               <template #help>
                 Choose the game type category
               </template>
             </UFormField>
 
             <UFormField v-if="form.nestId" label="Select Egg" name="eggId" required>
-              <USelect v-model="form.eggId" :options="availableEggs.map((e: Egg) => ({ label: e.name, value: e.id }))"
-                placeholder="Select egg" required :disabled="availableEggs.length === 0" />
+              <USelect 
+                v-model="form.eggId" 
+                :items="eggSelectItems"
+                value-key="value"
+                placeholder="Select egg" 
+                required 
+                :disabled="availableEggs.length === 0"
+                class="w-full"
+              />
               <template #help>
                 Choose the specific server type
               </template>
@@ -279,8 +381,14 @@ const stepTitles = [
 
           <div v-if="currentStep === 3" class="space-y-4">
             <UFormField label="Select Node" name="nodeId" required>
-              <USelect v-model="form.nodeId" :options="nodes.map((n: any) => ({ label: n.name, value: n.id }))"
-                placeholder="Select node" required />
+              <USelect 
+                v-model="form.nodeId" 
+                :items="nodeSelectItems"
+                value-key="value"
+                placeholder="Select node" 
+                required 
+                class="w-full"
+              />
               <template #help>
                 Choose which node will host this server
               </template>
@@ -348,7 +456,7 @@ const stepTitles = [
             </div>
 
             <UFormField label="OOM Killer" name="oomDisabled">
-              <UToggle v-model="form.oomDisabled" />
+              <USwitch v-model="form.oomDisabled" />
               <template #help>
                 Disable Out-of-Memory killer (not recommended)
               </template>
@@ -357,18 +465,37 @@ const stepTitles = [
 
           <div v-if="currentStep === 5" class="space-y-4">
             <UFormField label="Primary Allocation" name="allocationId" required>
-              <UInput v-model="form.allocationId" placeholder="Allocation ID (temporary - needs allocation selector)"
-                required class="w-full" />
+              <USelectMenu 
+                v-model="form.allocationId" 
+                :items="allocationSelectItems"
+                value-key="value"
+                placeholder="Select an allocation..."
+                :disabled="!form.nodeId || isLoadingAllocations || availableAllocations.length === 0"
+                :loading="isLoadingAllocations"
+                class="w-full"
+              >
+                <template #item-label="{ item }">
+                  <div class="flex flex-col">
+                    <span class="font-mono">{{ item.label }}</span>
+                    <span v-if="item.description" class="text-xs text-muted-foreground">{{ item.description }}</span>
+                  </div>
+                </template>
+              </USelectMenu>
               <template #help>
-                The primary IP:Port for this server
+                <span v-if="!form.nodeId">Select a node first to see available allocations</span>
+                <span v-else-if="isLoadingAllocations">Loading allocations...</span>
+                <span v-else-if="availableAllocations.length === 0">No unassigned allocations available for this node</span>
+                <span v-else>The primary IP:Port for this server</span>
               </template>
             </UFormField>
 
-            <UAlert color="warning" icon="i-lucide-info">
-              <template #title>Allocation Management</template>
+            <UAlert v-if="form.nodeId && availableAllocations.length === 0 && !isLoadingAllocations" color="warning" icon="i-lucide-alert-triangle">
+              <template #title>No Available Allocations</template>
               <template #description>
-                Allocation selection UI will be implemented in a future update.
-                For now, you'll need to manually enter an allocation ID.
+                This node has no unassigned allocations. Please create allocations for this node first.
+                <NuxtLink :to="`/admin/nodes/${form.nodeId}`" class="mt-2 inline-block text-sm text-primary hover:underline">
+                  Go to Node Allocations →
+                </NuxtLink>
               </template>
             </UAlert>
 
@@ -395,11 +522,11 @@ const stepTitles = [
 
             <div class="flex gap-4">
               <UFormField label="Skip Install Scripts" name="skipScripts">
-                <UToggle v-model="form.skipScripts" />
+                <USwitch v-model="form.skipScripts" />
               </UFormField>
 
               <UFormField label="Start After Install" name="startOnCompletion">
-                <UToggle v-model="form.startOnCompletion" />
+                <USwitch v-model="form.startOnCompletion" />
               </UFormField>
             </div>
           </div>

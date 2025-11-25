@@ -1,6 +1,7 @@
 import { createError, readBody, type H3Event } from 'h3'
 import { resolveServerRequest } from '~~/server/utils/http/serverAccess'
 import { remoteWriteFile } from '~~/server/utils/wings/registry'
+import { debugError } from '~~/server/utils/logger'
 
 interface WriteFileBody {
   file?: string
@@ -33,13 +34,17 @@ export default defineEventHandler(async (event: H3Event) => {
 
   try {
     await remoteWriteFile(context.server.uuid, filePath, contents, context.node?.id)
-
     return {
       success: true,
       message: 'File saved successfully',
     }
   }
   catch (error) {
+    debugError('[Files Write] Failed to save file to Wings:', {
+      error: error instanceof Error ? error.message : String(error),
+      serverUuid: context.server.uuid,
+      filePath,
+    })
     throw createError({
       statusCode: 500,
       statusMessage: 'Wings API Error',

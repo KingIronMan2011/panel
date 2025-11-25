@@ -54,6 +54,7 @@ export interface StartupResponse {
   data: {
     startup: string
     dockerImage: string
+    dockerImages?: Record<string, string> 
     environment: Record<string, string>
   }
 }

@@ -1,6 +1,4 @@
 <script setup lang="ts">
-import type { ServerStartupVariable } from '#shared/types/server'
-
 const route = useRoute()
 
 definePageMeta({
@@ -9,26 +7,113 @@ definePageMeta({
 })
 
 const serverId = computed(() => route.params.id as string)
+const toast = useToast()
 
-const { data: variablesData, pending, error } = await useAsyncData(
+const { data: startupData, pending, error, refresh } = await useAsyncData(
   `server-${serverId.value}-startup`,
-  () => $fetch<{ data: ServerStartupVariable[] }>(`/api/servers/${serverId.value}/startup`),
+  () => $fetch<any>(`/api/servers/${serverId.value}/startup`),
   {
     watch: [serverId],
   },
 )
 
-const variables = computed(() => variablesData.value?.data || [])
+const startupResponse = startupData.value as any
+const startup = computed(() => startupResponse?.data?.startup || '')
+const dockerImage = computed(() => startupResponse?.data?.dockerImage || '')
+const dockerImages = computed(() => startupResponse?.data?.dockerImages || {})
+const environment = computed(() => startupResponse?.data?.environment || {})
 
-const startupCommand = computed(() => {
-  const vars = variables.value
-  if (vars.length === 0) return 'No startup command configured'
+const hasMultipleDockerImages = computed(() => Object.keys(dockerImages.value).length > 1)
 
-  const jarFile = vars.find(v => v.key === 'SERVER_JARFILE')?.value || 'server.jar'
-  const memory = vars.find(v => v.key === 'SERVER_MEMORY')?.value || '2048'
-
-  return `java -Xms128M -Xmx${memory}M -jar ${jarFile}`
+const isCustomDockerImage = computed(() => {
+  const images = Object.values(dockerImages.value)
+  return images.length > 0 && !images.includes(dockerImage.value)
 })
+
+const selectedDockerImage = ref<string>(dockerImage.value)
+const isChangingDockerImage = ref(false)
+
+watch(dockerImage, (newImage) => {
+  selectedDockerImage.value = newImage
+}, { immediate: true })
+
+const dockerImageOptions = computed(() => {
+  return Object.entries(dockerImages.value).map(([key, value]) => ({
+    label: `${key} (${value})`,
+    value: value as string,
+  }))
+})
+
+async function updateDockerImage() {
+  console.log('[Client Startup] Update Docker Image clicked!', {
+    serverId: serverId.value,
+    currentImage: dockerImage.value,
+    selectedImage: selectedDockerImage.value,
+    timestamp: new Date().toISOString(),
+  })
+
+  if (selectedDockerImage.value === dockerImage.value) {
+    console.warn('[Client Startup] No change - selected image is same as current')
+    toast.add({
+      title: 'No Changes',
+      description: 'Docker image is already set to this value',
+      color: 'primary',
+    })
+    return
+  }
+
+  const images = Object.values(dockerImages.value)
+  console.log('[Client Startup] Validating image against egg list:', {
+    selectedImage: selectedDockerImage.value,
+    validImages: images,
+    isValid: images.includes(selectedDockerImage.value),
+  })
+
+  if (images.length > 0 && !images.includes(selectedDockerImage.value)) {
+    console.error('[Client Startup] Invalid image - not in egg list')
+    toast.add({
+      title: 'Invalid Image',
+      description: 'This server\'s Docker image can only be changed to one from the egg\'s list.',
+      color: 'error',
+    })
+    return
+  }
+
+  isChangingDockerImage.value = true
+  try {
+    console.log('[Client Startup] Making PUT request to:', `/api/servers/${serverId.value}/settings/docker-image`)
+    
+    const response = await $fetch(`/api/servers/${serverId.value}/docker-image`, {
+      method: 'PUT',
+      body: { dockerImage: selectedDockerImage.value },
+    })
+    
+    console.log('[Client Startup] PUT request successful:', response)
+
+    toast.add({
+      title: 'Docker Image Updated',
+      description: 'The Docker image has been updated. Restart your server for changes to take effect.',
+      color: 'success',
+    })
+
+    await refresh()
+  }
+  catch (error) {
+    console.error('[Client Startup] PUT request failed:', error)
+    const err = error as { data?: { message?: string } }
+    toast.add({
+      title: 'Error',
+      description: err.data?.message || 'Failed to update Docker image',
+      color: 'error',
+    })
+    
+    selectedDockerImage.value = dockerImage.value
+  }
+  finally {
+    isChangingDockerImage.value = false
+    console.log('[Client Startup] Docker image update complete')
+  }
+}
 </script>
 
 <template>
@@ -36,84 +121,140 @@ const startupCommand = computed(() => {
     <UPageBody>
       <UContainer>
         <section class="space-y-6">
-        <header class="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <p class="text-xs text-muted-foreground">Server {{ serverId }} · Startup</p>
-            <h1 class="text-xl font-semibold">Startup configuration</h1>
-          </div>
-        </header>
-
-        <div v-if="error" class="rounded-lg border border-error/20 bg-error/5 p-4 text-sm text-error">
-          <div class="flex items-start gap-2">
-            <UIcon name="i-lucide-alert-circle" class="mt-0.5 size-4" />
+          <header class="flex flex-wrap items-center justify-between gap-4">
             <div>
-              <p class="font-medium">Failed to load startup configuration</p>
-              <p class="mt-1 text-xs opacity-80">{{ error.message }}</p>
+              <p class="text-xs text-muted-foreground">Server {{ serverId }} · Startup</p>
+              <h1 class="text-xl font-semibold">Startup Configuration</h1>
+            </div>
+          </header>
+
+          <div v-if="error" class="rounded-lg border border-error/20 bg-error/5 p-4 text-sm text-error">
+            <div class="flex items-start gap-2">
+              <UIcon name="i-lucide-alert-circle" class="mt-0.5 size-4" />
+              <div>
+                <p class="font-medium">Failed to load startup configuration</p>
+                <p class="mt-1 text-xs opacity-80">{{ error.message }}</p>
+              </div>
             </div>
           </div>
-        </div>
 
-        <div v-else-if="pending" class="flex items-center justify-center py-12">
-          <UIcon name="i-lucide-loader-2" class="size-6 animate-spin text-muted-foreground" />
-        </div>
+          <div v-else-if="pending" class="flex items-center justify-center py-12">
+            <UIcon name="i-lucide-loader-2" class="size-6 animate-spin text-muted-foreground" />
+          </div>
 
-        <template v-else>
-          <UCard>
-            <template #header>
-              <div class="flex flex-wrap items-start justify-between gap-4">
-                <div>
+          <template v-else>
+            <UCard>
+              <template #header>
+                <div class="flex items-center gap-2">
+                  <UIcon name="i-lucide-rocket" class="size-5" />
                   <h2 class="text-lg font-semibold">Startup Command</h2>
-                  <p class="text-xs text-muted-foreground">Generated from environment variables</p>
                 </div>
-              </div>
-            </template>
+              </template>
 
-            <div class="space-y-4">
-              <div>
-                <p class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Launch command</p>
-                <code class="mt-2 block rounded bg-muted px-3 py-2 text-sm">{{ startupCommand }}</code>
-              </div>
-            </div>
-          </UCard>
+              <div class="space-y-4">
+                <div class="rounded-md border border-default bg-muted/30 p-4">
+                  <p class="text-xs uppercase tracking-wide text-muted-foreground mb-2">Current Startup Command</p>
+                  <code class="text-sm font-mono text-foreground">{{ startup }}</code>
+                </div>
 
-          <UCard>
-            <template #header>
-              <div class="flex items-center justify-between">
-                <h2 class="text-lg font-semibold">Environment Variables</h2>
+                <UAlert color="primary" icon="i-lucide-info">
+                  <template #description>
+                    The startup command is configured by your server administrator and cannot be changed.
+                  </template>
+                </UAlert>
               </div>
-            </template>
+            </UCard>
 
-            <div v-if="variables.length === 0" class="rounded-lg border border-dashed border-default p-8 text-center">
-              <UIcon name="i-lucide-settings" class="mx-auto size-12 text-muted-foreground/50" />
-              <p class="mt-3 text-sm font-medium">No variables configured</p>
-              <p class="mt-1 text-xs text-muted-foreground">Environment variables will appear here once configured.</p>
-            </div>
+            <UCard>
+              <template #header>
+                <div class="flex items-center gap-2">
+                  <UIcon name="i-lucide-container" class="size-5" />
+                  <h2 class="text-lg font-semibold">Docker Image</h2>
+                </div>
+              </template>
 
-            <div v-else class="overflow-hidden rounded-lg border border-default">
-              <div class="grid grid-cols-12 bg-muted/50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                <span class="col-span-3">Key</span>
-                <span class="col-span-3">Value</span>
-                <span class="col-span-5">Description</span>
-                <span class="col-span-1 text-right">Edit</span>
-              </div>
-              <div class="divide-y divide-default">
-                <div
-                  v-for="variable in variables"
-                  :key="variable.id"
-                  class="grid grid-cols-12 gap-2 px-4 py-3 text-sm"
-                >
-                  <span class="col-span-3 font-medium">{{ variable.key }}</span>
-                  <code class="col-span-3 rounded bg-muted px-2 py-1 text-xs">{{ variable.value }}</code>
-                  <span class="col-span-5 text-xs text-muted-foreground">{{ variable.description || '—' }}</span>
-                  <div class="col-span-1 flex justify-end">
-                    <UBadge v-if="variable.isEditable" size="xs" color="primary">Editable</UBadge>
-                    <UBadge v-else size="xs" color="neutral">Read-only</UBadge>
+              <div class="space-y-4">
+                <div v-if="hasMultipleDockerImages && !isCustomDockerImage">
+                  <UFormField
+                    label="Docker Image"
+                    name="dockerImage"
+                    description="The Docker image used to run this server instance"
+                  >
+                    <USelectMenu
+                      v-model="selectedDockerImage"
+                      :items="dockerImageOptions"
+                      value-key="value"
+                      class="w-full"
+                    />
+                  </UFormField>
+
+                  <div class="flex justify-end mt-4">
+                    <UButton
+                      icon="i-lucide-check"
+                      color="primary"
+                      :loading="isChangingDockerImage"
+                      :disabled="isChangingDockerImage || selectedDockerImage === dockerImage"
+                      @click="updateDockerImage"
+                    >
+                      Update Docker Image
+                    </UButton>
                   </div>
                 </div>
+
+                <div v-else class="rounded-md border border-default bg-muted/30 p-4">
+                  <p class="text-xs uppercase tracking-wide text-muted-foreground mb-2">Current Docker Image</p>
+                  <code class="text-sm font-mono text-foreground">{{ dockerImage }}</code>
+                  
+                  <UAlert v-if="isCustomDockerImage" color="warning" icon="i-lucide-alert-triangle" class="mt-4">
+                    <template #description>
+                      This server's Docker image has been manually set by an administrator and cannot be changed.
+                    </template>
+                  </UAlert>
+
+                  <UAlert v-else color="primary" icon="i-lucide-info" class="mt-4">
+                    <template #description>
+                      This egg only provides one Docker image option. Contact an administrator to change it.
+                    </template>
+                  </UAlert>
+                </div>
               </div>
-            </div>
-          </UCard>
-        </template>
+            </UCard>
+
+            <UCard>
+              <template #header>
+                <div class="flex items-center gap-2">
+                  <UIcon name="i-lucide-variable" class="size-5" />
+                  <h2 class="text-lg font-semibold">Environment Variables</h2>
+                </div>
+              </template>
+
+              <ServerEmptyState
+                v-if="Object.keys(environment).length === 0"
+                icon="i-lucide-variable"
+                title="No environment variables"
+                description="Environment variables will appear here when configured by an administrator."
+              />
+
+              <div v-else class="grid gap-3">
+                <div
+                  v-for="(value, key) in environment"
+                  :key="key"
+                  class="rounded-md border border-default bg-muted/30 p-4"
+                >
+                  <p class="text-xs uppercase tracking-wide text-muted-foreground mb-2">{{ key }}</p>
+                  <code class="text-sm font-mono text-foreground break-all">{{ value }}</code>
+                </div>
+              </div>
+
+              <template #footer>
+                <UAlert color="primary" icon="i-lucide-info">
+                  <template #description>
+                    Environment variables are configured by your server administrator and cannot be changed.
+                  </template>
+                </UAlert>
+              </template>
+            </UCard>
+          </template>
         </section>
       </UContainer>
     </UPageBody>

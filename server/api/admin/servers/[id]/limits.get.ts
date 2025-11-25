@@ -11,26 +11,45 @@ export default defineEventHandler(async (event) => {
     })
   }
 
-  const serverId = getRouterParam(event, 'id')
-  if (!serverId) {
+  const identifier = getRouterParam(event, 'id')
+  if (!identifier) {
     throw createError({
       statusCode: 400,
       message: 'Server ID is required',
     })
   }
 
+  const { findServerByIdentifier } = await import('~~/server/utils/serversStore')
+  const server = await findServerByIdentifier(identifier)
+
+  if (!server) {
+    throw createError({
+      statusCode: 404,
+      message: 'Server not found',
+    })
+  }
+
   const db = useDrizzle()
   const [limits] = db.select()
     .from(tables.serverLimits)
-    .where(eq(tables.serverLimits.serverId, serverId))
+    .where(eq(tables.serverLimits.serverId, server.id))
     .limit(1)
     .all()
 
   if (!limits) {
-    throw createError({
-      statusCode: 404,
-      message: 'Server limits not found',
-    })
+    return {
+      data: {
+        cpu: 0,
+        memory: 0,
+        swap: 0,
+        disk: 0,
+        io: 500,
+        threads: null,
+        databaseLimit: null,
+        allocationLimit: null,
+        backupLimit: null,
+      },
+    }
   }
 
   return {

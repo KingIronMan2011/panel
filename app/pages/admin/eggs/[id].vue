@@ -80,7 +80,7 @@ async function handleVariableSubmit() {
     if (editingVariable.value) {
 
       await $fetch(`/api/admin/eggs/${eggId.value}/variables/${editingVariable.value.id}`, {
-        method: 'PATCH',
+        method: 'patch',
         body: variableForm.value,
       })
       toast.add({ title: 'Variable updated', color: 'success' })

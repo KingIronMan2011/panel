@@ -5,15 +5,25 @@ const KEY_LENGTH = 32
 const IV_LENGTH = 16
 
 function getEncryptionKey(): Buffer {
-  const key = process.env.WINGS_ENCRYPTION_KEY || process.env.NUXT_SESSION_PASSWORD
+  const key = process.env.WINGS_ENCRYPTION_KEY 
+    || process.env.NUXT_SESSION_PASSWORD
+    || process.env.BETTER_AUTH_SECRET
+    || process.env.AUTH_SECRET
 
   if (!key) {
-    throw new Error('WINGS_ENCRYPTION_KEY or NUXT_SESSION_PASSWORD must be set')
+    throw new Error(
+      'Wings token encryption requires one of the following environment variables:\n' +
+      '  - WINGS_ENCRYPTION_KEY (preferred for Wings-specific encryption)\n' +
+      '  - NUXT_SESSION_PASSWORD (Nuxt session encryption key)\n' +
+      '  - BETTER_AUTH_SECRET (Better Auth secret - can be reused)\n' +
+      '  - AUTH_SECRET (Alternative auth secret)\n' +
+      '\n' +
+      'Note: You can use the same BETTER_AUTH_SECRET for both Better Auth and Wings token encryption.'
+    )
   }
 
   const keyBuffer = Buffer.from(key, 'utf-8')
   if (keyBuffer.length < KEY_LENGTH) {
-
     return Buffer.concat([keyBuffer, Buffer.alloc(KEY_LENGTH - keyBuffer.length)])
   }
 

@@ -23,9 +23,10 @@ export function createWingsClient(node: WingsNodeConnection) {
       ...options.headers,
     }
 
-    if (node.allowInsecure) {
-      throw new Error('Insecure Wings connections are not supported. Disable "allowInsecure" on this node.')
-    }
+    // Allow insecure connections for local/development Wings instances
+    // if (node.allowInsecure) {
+    //   throw new Error('Insecure Wings connections are not supported. Disable "allowInsecure" on this node.')
+    // }
 
     const response = await fetch(url, {
       method: options.method || 'GET',

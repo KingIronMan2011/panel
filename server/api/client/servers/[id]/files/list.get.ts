@@ -1,7 +1,8 @@
-import { createError } from 'h3'
+import { createError, getRouterParam, getQuery } from 'h3'
 import { getServerSession } from '~~/server/utils/session'
 import { useDrizzle, tables, eq, and } from '~~/server/utils/drizzle'
 import { resolveSessionUser } from '~~/server/utils/auth/sessionUser'
+import { findServerByIdentifier } from '~~/server/utils/serversStore'
 import type { FileEntry } from '#shared/types/api'
 
 export default defineEventHandler(async (event): Promise<FileEntry[]> => {
@@ -25,12 +26,7 @@ export default defineEventHandler(async (event): Promise<FileEntry[]> => {
   const query = getQuery(event)
   const directory = (query.directory as string) || '/'
 
-  const db = useDrizzle()
-  const [server] = db.select()
-    .from(tables.servers)
-    .where(eq(tables.servers.id, serverId))
-    .limit(1)
-    .all()
+  const server = await findServerByIdentifier(serverId)
 
   if (!server) {
     throw createError({
@@ -42,16 +38,18 @@ export default defineEventHandler(async (event): Promise<FileEntry[]> => {
   const isOwner = server.ownerId === user.id
   const isAdmin = user.role === 'admin'
 
+  const db = useDrizzle()
   if (!isOwner && !isAdmin) {
     const [subuser] = await db.select()
       .from(tables.serverSubusers)
       .where(
         and(
-          eq(tables.serverSubusers.serverId, serverId),
+          eq(tables.serverSubusers.serverId, server.id),
           eq(tables.serverSubusers.userId, user.id),
         ),
       )
       .limit(1)
+      .all()
 
     if (!subuser) {
       throw createError({

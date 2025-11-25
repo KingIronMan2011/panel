@@ -39,9 +39,35 @@ export default defineEventHandler(async (event) => {
     })
   }
 
+  let eggDockerImages: Record<string, string> = {}
+  if (egg.dockerImages) {
+    try {
+      eggDockerImages = typeof egg.dockerImages === 'string' 
+        ? JSON.parse(egg.dockerImages) 
+        : egg.dockerImages
+    } catch (e) {
+      console.warn('[Docker Image PUT] Failed to parse egg dockerImages:', e)
+    }
+  }
+  
+  if (Object.keys(eggDockerImages).length === 0 && egg.dockerImage) {
+    eggDockerImages = { [egg.name || 'Default']: egg.dockerImage }
+  }
+
+  const currentImage = server.dockerImage || server.image
+  const isInEggImages = Object.values(eggDockerImages).includes(currentImage || '')
+  
+  if (!isInEggImages && currentImage) {
+    throw createError({
+      statusCode: 400,
+      message: 'This server\'s Docker image has been manually set by an administrator and cannot be updated.',
+    })
+  }
+
   db.update(tables.servers)
     .set({
-      image: docker_image,
+      dockerImage: docker_image,
+      image: docker_image, 
       updatedAt: new Date(),
     })
     .where(eq(tables.servers.id, server.id))

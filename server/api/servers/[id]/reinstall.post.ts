@@ -44,10 +44,25 @@ export default defineEventHandler(async (event) => {
     })
   }
 
+  console.log('[Reinstall] Starting server reinstall:', {
+    serverId: server.id,
+    serverUuid: server.uuid,
+    serverName: server.name,
+    currentStatus: server.status,
+    currentDockerImage: server.dockerImage || server.image,
+    eggId: server.eggId,
+    requestedBy: user.email,
+    timestamp: new Date().toISOString(),
+  })
+
   try {
     const { getWingsClientForServer } = await import('../../../utils/wings-client')
     const { client } = await getWingsClientForServer(serverId)
+    
+    console.log('[Reinstall] Calling Wings reinstall endpoint...')
     await client.reinstallServer(serverId)
+    
+    console.log('[Reinstall] Wings accepted reinstall request, updating status to installing')
 
     db.update(tables.servers)
       .set({
@@ -56,9 +71,15 @@ export default defineEventHandler(async (event) => {
       })
       .where(eq(tables.servers.uuid, serverId))
       .run()
+    
+    console.log('[Reinstall] Server status updated to installing')
   }
   catch (error) {
-    console.error('Wings reinstall failed:', error)
+    console.error('[Reinstall] Wings reinstall failed:', {
+      error: error instanceof Error ? error.message : String(error),
+      serverId: server.id,
+      serverUuid: server.uuid,
+    })
     throw createError({
       statusCode: 500,
       statusMessage: 'Failed to trigger reinstall on Wings',

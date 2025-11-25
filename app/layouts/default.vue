@@ -4,7 +4,7 @@ import { storeToRefs } from 'pinia'
 import type { NavigationMenuItem } from '@nuxt/ui'
 import { authClient } from '~/utils/auth-client'
 
-const { data: sessionData } = await authClient.useSession(useFetch)
+await authClient.useSession(useFetch)
 
 const authStore = useAuthStore()
 const { user, displayName, avatar, isAdmin: isAdminRef, isAuthenticated } = storeToRefs(authStore)
@@ -102,52 +102,68 @@ const isAdminUser = computed(() => {
       </template>
 
       <template #footer="{ collapsed }">
-        <template v-if="isAuthenticated && user && userLabel">
-          <UDropdownMenu
-            :items="[[
-              { label: 'Profile', to: '/account/profile' },
-              { label: 'Security', to: '/account/security' },
-              { label: 'API Keys', to: '/account/api-keys' },
-              { label: 'SSH Keys', to: '/account/ssh-keys' },
-              { label: 'Sessions', to: '/account/sessions' },
-              { label: 'Activity', to: '/account/activity' }
-            ], [
-              { label: 'Sign out', click: handleSignOut, color: 'error' }
-            ]]"
-          >
+        <ClientOnly>
+          <template v-if="isAuthenticated && user && userLabel">
+            <UDropdownMenu
+              :items="[[
+                { label: 'Profile', to: '/account/profile' },
+                { label: 'Security', to: '/account/security' },
+                { label: 'API Keys', to: '/account/api-keys' },
+                { label: 'SSH Keys', to: '/account/ssh-keys' },
+                { label: 'Sessions', to: '/account/sessions' },
+                { label: 'Activity', to: '/account/activity' }
+              ], [
+                { label: 'Sign out', click: handleSignOut, color: 'error' }
+              ]]"
+            >
+              <UButton
+                color="neutral"
+                variant="ghost"
+                class="w-full"
+                :block="collapsed"
+                type="button"
+                @click.prevent
+              >
+                <template #leading>
+                  <UAvatar v-if="userAvatar" v-bind="userAvatar" size="sm" />
+                </template>
+                <span v-if="!collapsed && userLabel">{{ userLabel }}</span>
+              </UButton>
+            </UDropdownMenu>
+          </template>
+          <template v-else>
             <UButton
-              color="neutral"
+              color="error"
               variant="ghost"
               class="w-full"
               :block="collapsed"
-              type="button"
-              @click.prevent
+              to="/auth/login"
             >
               <template #leading>
-                <UAvatar v-if="userAvatar" v-bind="userAvatar" size="sm" />
+                <UIcon name="i-lucide-log-in" class="size-4" />
               </template>
-              <span v-if="!collapsed && userLabel">{{ userLabel }}</span>
+              <span v-if="!collapsed">Sign in</span>
             </UButton>
-          </UDropdownMenu>
-        </template>
-        <template v-else>
-          <UButton
-            color="error"
-            variant="ghost"
-            class="w-full"
-            :block="collapsed"
-            to="/auth/login"
-          >
-            <template #leading>
-              <UIcon name="i-lucide-log-in" class="size-4" />
-            </template>
-            <span v-if="!collapsed">Sign in</span>
-          </UButton>
-        </template>
+          </template>
+          <template #fallback>
+            <UButton
+              color="error"
+              variant="ghost"
+              class="w-full"
+              :block="collapsed"
+              to="/auth/login"
+            >
+              <template #leading>
+                <UIcon name="i-lucide-log-in" class="size-4" />
+              </template>
+              <span v-if="!collapsed">Sign in</span>
+            </UButton>
+          </template>
+        </ClientOnly>
       </template>
     </UDashboardSidebar>
 
-    <UDashboardPanel :ui="{ body: 'flex flex-1 flex-col p-0' }">
+    <UDashboardPanel :key="'dashboard-panel'" :ui="{ body: 'flex flex-1 flex-col p-0' }">
       <template #body>
         <UDashboardNavbar>
           <template #right>

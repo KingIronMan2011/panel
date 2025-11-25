@@ -165,7 +165,7 @@ async function handleSubmit(event: FormSubmitEvent<FormSchema>) {
 
   try {
     await $fetch('/api/admin/settings/mail', {
-      method: 'PATCH',
+      method: 'patch',
       body: {
         ...payload,
         service: persistedService,

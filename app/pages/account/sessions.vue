@@ -174,6 +174,7 @@ async function handleSignOutAll(includeCurrent = false) {
         return
       }
       catch {
+        // Error already handled by toast
       }
     }
 

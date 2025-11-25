@@ -1,4 +1,6 @@
 import type { WingsNode, WingsServerDetails, WingsFileObject, WingsBackup } from '#shared/types/wings-client'
+import { decryptToken } from '~~/server/utils/wings/encryption'
+import { debugLog, debugError } from '~~/server/utils/logger'
 
 export class WingsConnectionError extends Error {
   constructor(message: string, public override cause?: Error) {
@@ -16,13 +18,18 @@ export class WingsAuthError extends Error {
 
 export class WingsClient {
   private baseUrl: string
-  private token: string
+  private encryptedToken: string
   private timeout: number = 30000
   private maxRetries = 3
 
   constructor(node: WingsNode) {
     this.baseUrl = `${node.scheme}://${node.fqdn}:${node.daemonListen}`
-    this.token = `Bearer ${node.tokenId}.${node.token}`
+    this.encryptedToken = node.token
+  }
+
+  private getToken(): string {
+    const plainSecret = decryptToken(this.encryptedToken)
+    return `Bearer ${plainSecret}`
   }
 
   private async request<T>(
@@ -41,7 +48,7 @@ export class WingsClient {
           ...options,
           signal: controller.signal,
           headers: {
-            'Authorization': this.token,
+            'Authorization': this.getToken(),
             'Accept': 'application/json',
             'Content-Type': 'application/json',
             ...options.headers,
@@ -62,16 +69,27 @@ export class WingsClient {
               errorMessage += ` - ${errorBody}`
             }
           } catch {
+            // Error body parsing failed, continue with error message
           }
 
           throw new WingsConnectionError(errorMessage)
         }
 
-        if (response.status === 204) {
+        if (response.status === 204 || response.status === 202) {
           return {} as T
         }
 
-        return response.json()
+        const contentType = response.headers.get('content-type')
+        if (!contentType || !contentType.includes('application/json')) {
+          return {} as T
+        }
+
+        const text = await response.text()
+        if (!text || text.trim().length === 0) {
+          return {} as T
+        }
+
+        return JSON.parse(text) as T
       } catch (error) {
         clearTimeout(timeoutId)
 
@@ -111,7 +129,7 @@ export class WingsClient {
       await this.request('/api/system')
       return true
     } catch (error) {
-      console.error('Wings connection test failed:', error)
+      debugError('Wings connection test failed:', error)
       return false
     }
   }
@@ -164,7 +182,7 @@ export class WingsClient {
       `${this.baseUrl}/api/servers/${serverUuid}/files/contents?${params}`,
       {
         headers: {
-          'Authorization': this.token,
+          'Authorization': this.getToken(),
           'Accept': 'application/json',
         },
       }
@@ -188,7 +206,7 @@ export class WingsClient {
       {
         method: 'POST',
         headers: {
-          'Authorization': this.token,
+          'Authorization': this.getToken(),
           'Content-Type': 'text/plain',
         },
         body: content,
@@ -374,16 +392,28 @@ export class WingsClient {
   }
 
   async createServer(serverUuid: string, config: Record<string, unknown>): Promise<void> {
-    await this.request(`/api/servers/${serverUuid}`, {
+    const payload = {
+      uuid: serverUuid,
+      start_on_completion: config.start_on_completion ?? true,
+    }
+    await this.request('/api/servers', {
       method: 'POST',
-      body: JSON.stringify(config),
+      body: JSON.stringify(payload),
     })
   }
 
   async updateServer(serverUuid: string, config: Record<string, unknown>): Promise<void> {
     await this.request(`/api/servers/${serverUuid}`, {
-      method: 'PATCH',
+      method: 'patch',
       body: JSON.stringify(config),
+    })
+  }
+
+  async syncServer(serverUuid: string): Promise<void> {
+    // Wings removed PATCH /api/servers/:server and replaced it with POST /api/servers/:server/sync
+    // This triggers Wings to refetch the server config from the panel and apply changes immediately
+    await this.request(`/api/servers/${serverUuid}/sync`, {
+      method: 'POST',
     })
   }
 

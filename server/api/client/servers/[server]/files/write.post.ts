@@ -62,6 +62,7 @@ export default defineEventHandler(async (event) => {
         { from: file.substring(file.lastIndexOf('/') + 1), to: backupPath.substring(backupPath.lastIndexOf('/') + 1) }
       ])
     } catch {
+      // Backup failed, continue with write operation
     }
     
     await client.writeFileContents(server.uuid as string, file, content)

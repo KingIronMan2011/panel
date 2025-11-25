@@ -11,6 +11,7 @@ const toast = useToast()
 const router = useRouter()
 const suspendedSubmitting = ref(false)
 const reinstallSubmitting = ref(false)
+const createOnWingsSubmitting = ref(false)
 const deleteSubmitting = ref(false)
 const transferSubmitting = ref(false)
 
@@ -69,6 +70,10 @@ async function handleReinstall() {
       description: 'Server reinstallation has been queued',
       color: 'success',
     })
+    
+    setTimeout(() => {
+      router.go(0)
+    }, 2000)
   }
   catch (error) {
     const err = error as { data?: { message?: string } }
@@ -80,6 +85,47 @@ async function handleReinstall() {
   }
   finally {
     reinstallSubmitting.value = false
+  }
+}
+
+async function handleCreateOnWings() {
+  if (!confirm('This will create/install the server on Wings. Continue?')) {
+    return
+  }
+
+  if (createOnWingsSubmitting.value)
+    return
+
+  createOnWingsSubmitting.value = true
+  try {
+    await $fetch(`/api/admin/servers/create-on-wings`, {
+      method: 'POST',
+      body: {
+        serverId: props.server.id,
+        startOnCompletion: true,
+      },
+    })
+
+    toast.add({
+      title: 'Installation started',
+      description: 'Server installation has been initiated on Wings',
+      color: 'success',
+    })
+    
+    setTimeout(() => {
+      router.go(0)
+    }, 2000)
+  }
+  catch (error) {
+    const err = error as { data?: { message?: string } }
+    toast.add({
+      title: 'Error',
+      description: err.data?.message || 'Failed to create server on Wings',
+      color: 'error',
+    })
+  }
+  finally {
+    createOnWingsSubmitting.value = false
   }
 }
 
@@ -213,18 +259,36 @@ async function handleDelete() {
         </UButton>
       </div>
 
+      <div v-if="server.status === 'install_failed'" class="flex items-center justify-between rounded-lg border border-warning p-4">
+        <div class="space-y-1">
+          <p class="font-medium">Create/Install Server on Wings</p>
+          <p class="text-sm text-muted-foreground">
+            Install or reinstall the server on Wings. Use this if installation failed.
+          </p>
+        </div>
+        <UButton
+          icon="i-lucide-rocket"
+          color="primary"
+          :loading="createOnWingsSubmitting"
+          :disabled="createOnWingsSubmitting"
+          @click="handleCreateOnWings"
+        >
+          Install on Wings
+        </UButton>
+      </div>
+
       <div class="flex items-center justify-between rounded-lg border border-default p-4">
         <div class="space-y-1">
           <p class="font-medium">Reinstall Server</p>
           <p class="text-sm text-muted-foreground">
-            Delete all server files and run the installation script again
+            Delete all server files and run the installation script again (requires server to exist on Wings)
           </p>
         </div>
         <UButton
           icon="i-lucide-refresh-cw"
           color="warning"
           :loading="reinstallSubmitting"
-          :disabled="reinstallSubmitting"
+          :disabled="reinstallSubmitting || server.status === 'install_failed'"
           @click="handleReinstall"
         >
           Reinstall

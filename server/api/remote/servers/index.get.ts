@@ -1,22 +1,229 @@
 import { createError, getQuery, type H3Event } from 'h3'
-import { paginateServers } from '~~/server/utils/wings/registry'
-import { getNodeIdFromQuery } from '~~/server/utils/wings/http'
+import { getNodeIdFromAuth } from '~~/server/utils/wings/auth'
+import { toWingsHttpError } from '~~/server/utils/wings/http'
+import { useDrizzle, tables, eq } from '~~/server/utils/drizzle'
+import { sql } from 'drizzle-orm'
 
-export default defineEventHandler((event: H3Event) => {
-  const query = getQuery(event)
-  const page = Number(query.page ?? '1')
-  const perPage = Number(query.per_page ?? '50')
-  const nodeId = getNodeIdFromQuery(query)
-
-  if (Number.isNaN(page) || Number.isNaN(perPage) || perPage <= 0) {
-    throw createError({
-      statusCode: 400,
-      statusMessage: 'Invalid pagination parameters',
-      data: {
-        errors: [{ detail: 'Use positive numeric values for page and per_page.' }],
-      },
-    })
+function safeJsonParse(value: string | null | undefined, defaultValue: unknown = {}): unknown {
+  if (!value || typeof value !== 'string' || value.trim().length === 0) {
+    return defaultValue
   }
+  try {
+    return JSON.parse(value)
+  }
+  catch {
+    return defaultValue
+  }
+}
 
-  return paginateServers(page, perPage, nodeId)
+export default defineEventHandler(async (event: H3Event) => {
+  try {
+    const nodeId = await getNodeIdFromAuth(event)
+    const query = getQuery(event)
+    const page = Number(query.page ?? '0')
+    const perPage = Number(query.per_page ?? '50')
+
+    if (Number.isNaN(page) || Number.isNaN(perPage) || perPage <= 0) {
+      throw createError({
+        statusCode: 400,
+        statusMessage: 'Invalid pagination parameters',
+        data: {
+          errors: [{ detail: 'Use positive numeric values for page and per_page.' }],
+        },
+      })
+    }
+
+    const db = useDrizzle()
+    const offset = page * perPage
+
+    const servers = db
+      .select()
+      .from(tables.servers)
+      .where(eq(tables.servers.nodeId, nodeId))
+      .limit(perPage)
+      .offset(offset)
+      .all()
+
+    const total = db
+      .select({ count: sql`count(*)` })
+      .from(tables.servers)
+      .where(eq(tables.servers.nodeId, nodeId))
+      .get()
+
+    const totalCount = Number(total?.count ?? 0)
+
+    const serverConfigs = await Promise.all(servers.map(async (server) => {
+      try {
+        const allAllocations = db
+          .select()
+          .from(tables.serverAllocations)
+          .where(eq(tables.serverAllocations.serverId, server.id))
+          .all()
+
+        const primaryAllocation = allAllocations.find(a => a.isPrimary)
+        const allocations = allAllocations
+
+        const limits = db
+          .select()
+          .from(tables.serverLimits)
+          .where(eq(tables.serverLimits.serverId, server.id))
+          .get()
+
+        const egg = server.eggId
+          ? db
+              .select()
+              .from(tables.eggs)
+              .where(eq(tables.eggs.id, server.eggId))
+              .get()
+          : null
+
+        const envVars = db
+          .select()
+          .from(tables.serverStartupEnv)
+          .where(eq(tables.serverStartupEnv.serverId, server.id))
+          .all()
+
+        const serverEnvMap = new Map<string, string>()
+        for (const envVar of envVars) {
+          serverEnvMap.set(envVar.key, envVar.value || '')
+        }
+
+        const environment: Record<string, string> = {
+          STARTUP: egg?.startup || server.startup || '',
+        }
+
+        if (egg?.id) {
+          const eggVariables = db
+            .select()
+            .from(tables.eggVariables)
+            .where(eq(tables.eggVariables.eggId, egg.id))
+            .all()
+
+          for (const eggVar of eggVariables) {
+            const value = serverEnvMap.get(eggVar.envVariable) ?? eggVar.defaultValue ?? ''
+            if (value) {
+              environment[eggVar.envVariable] = value
+            }
+          }
+        }
+
+        for (const [key, value] of serverEnvMap.entries()) {
+          if (!environment[key] && value) {
+            environment[key] = value
+          }
+        }
+
+        environment.SERVER_MEMORY = String(limits?.memory ?? 512)
+        if (primaryAllocation) {
+          environment.SERVER_IP = primaryAllocation.ip
+          environment.SERVER_PORT = String(primaryAllocation.port)
+        }
+
+        const allocationMappings: Record<string, { ip: string; port: number }> = {}
+        for (const alloc of allocations) {
+          if (!alloc.isPrimary) {
+            allocationMappings[`${alloc.ip}:${alloc.port}`] = {
+              ip: alloc.ip,
+              port: alloc.port,
+            }
+          }
+        }
+
+        const settings = {
+          uuid: server.uuid,
+          suspended: server.suspended || false,
+          environment,
+          invocation: egg?.startup || server.startup || '',
+          skip_egg_scripts: false,
+          build: {
+            memory_limit: limits?.memory ?? 512,
+            swap: 0,
+            io_weight: limits?.io ?? 500,
+            cpu_limit: limits?.cpu ?? 100,
+            threads: limits?.threads || null,
+            disk_space: limits?.disk ?? 1024,
+            oom_disabled: limits?.oomDisabled ?? true,
+          },
+          container: {
+            image: server.dockerImage || egg?.dockerImage || server.image || 'ghcr.io/pterodactyl/yolks:java_17',
+            oom_disabled: limits?.oomDisabled ?? true,
+            requires_rebuild: false,
+          },
+          allocations: {
+            default: primaryAllocation
+              ? {
+                  ip: primaryAllocation.ip,
+                  port: primaryAllocation.port,
+                }
+              : {
+                  ip: '0.0.0.0',
+                  port: 25565,
+                },
+            mappings: allocationMappings,
+          },
+          mounts: [],
+          egg: {
+            id: server.eggId || '',
+            file_denylist: [],
+          },
+        }
+
+        const startupDone = egg?.startup || server.startup || ''
+        const startupDoneArray = startupDone 
+          ? (typeof startupDone === 'string' ? [startupDone] : Array.isArray(startupDone) ? startupDone : [])
+          : []
+
+        const processConfiguration = {
+          configs: [],
+          startup: {
+            done: startupDoneArray,
+            user_interaction: [],
+            strip_ansi: false,
+          },
+          stop: {
+            type: 'command',
+            value: '^C',
+          },
+          logs: {},
+          file_denylist: [],
+          config_stop: safeJsonParse(egg?.configStop, null),
+          config_logs: safeJsonParse(egg?.configLogs, null),
+          config_files: safeJsonParse(egg?.configFiles, {}),
+          config_startup: safeJsonParse(egg?.configStartup, {}),
+          egg_id: server.eggId || '',
+        }
+
+        return {
+          uuid: server.uuid,
+          settings,
+          process_configuration: processConfiguration,
+        }
+      } catch (serverError) {
+        console.error(`[Remote Servers] Error processing server ${server.uuid}:`, serverError)
+        throw serverError
+      }
+    }))
+
+    const totalPages = Math.ceil(totalCount / perPage)
+    const from = offset + 1 // 1-indexed
+    const to = Math.min(offset + servers.length, totalCount)
+
+    return {
+      data: serverConfigs,
+      meta: {
+        pagination: {
+          total: totalCount,
+          count: servers.length,
+          per_page: perPage,
+          current_page: page,
+          total_pages: totalPages,
+          from: totalCount > 0 ? from : 0,
+          to: totalCount > 0 ? to : 0,
+        },
+      },
+    }
+  }
+  catch (error) {
+    throw toWingsHttpError(error, { operation: 'list servers', nodeId: undefined })
+  }
 })

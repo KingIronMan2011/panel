@@ -1,65 +1,73 @@
-import { createError } from 'h3'
-import { z } from 'zod'
-import { requireAuth, getValidatedQuerySafe } from '~~/server/utils/security'
-
-import { listWingsNodes } from '~~/server/utils/wings/nodesStore'
-import { remoteListServers } from '~~/server/utils/wings/registry'
-import { toWingsHttpError } from '~~/server/utils/wings/http'
+import { createError, getQuery } from 'h3'
+import { requireAuth } from '~~/server/utils/security'
+import { useDrizzle, tables, eq, isNotNull, and, desc } from '~~/server/utils/drizzle'
 
 import type { ServerListEntry, ServersResponse } from '#shared/types/server'
 
-const serversQuerySchema = z.object({
-  scope: z.enum(['own', 'all']).optional().default('own'),
-})
-
 export default defineEventHandler(async (event): Promise<ServersResponse> => {
-  const session = await requireAuth(event)
-  const user = session.user
+  try {
+    const session = await requireAuth(event)
+    const user = session.user
 
-  const query = await getValidatedQuerySafe(event, serversQuerySchema)
-  const scope = query.scope
-  const includeAll = scope === 'all'
+    const query = getQuery(event)
+    const scopeParam = typeof query.scope === 'string' ? query.scope : 'own'
+    const scope = scopeParam === 'all' ? 'all' : 'own'
+    const includeAll = scope === 'all'
 
-  if (includeAll) {
-    const userRole = (user as { role?: string }).role
-    if (userRole !== 'admin') {
-      throw createError({ statusCode: 403, statusMessage: 'Forbidden', message: 'Admin access required to view all servers' })
-    }
-  }
-
-  const nodes = listWingsNodes()
-  const records: ServerListEntry[] = []
-
-  for (const node of nodes) {
-    try {
-      const servers = await remoteListServers(node.id)
-
-      for (const server of servers) {
-        const extended = server as unknown as Record<string, unknown>
-
-        records.push({
-          uuid: server.uuid,
-          identifier: server.identifier,
-          name: server.name,
-          nodeId: node.id,
-          nodeName: node.name,
-          description: typeof extended.description === 'string' ? extended.description : null,
-          limits: typeof extended.limits === 'object' && extended.limits !== null ? extended.limits as Record<string, unknown> : null,
-          featureLimits: typeof extended.feature_limits === 'object' && extended.feature_limits !== null ? extended.feature_limits as Record<string, unknown> : null,
-          status: 'unknown',
-          ownership: includeAll ? 'shared' : 'mine',
-          suspended: Boolean(extended.suspended),
-          isTransferring: Boolean(extended.is_transferring),
-        })
+    if (includeAll) {
+      const userRole = (user as { role?: string }).role
+      if (userRole !== 'admin') {
+        throw createError({ statusCode: 403, statusMessage: 'Forbidden', message: 'Admin access required to view all servers' })
       }
     }
-    catch (error) {
-      throw toWingsHttpError(error, { operation: 'list Wings servers', nodeId: node.id })
-    }
-  }
 
-  return {
-    data: records,
-    generatedAt: new Date().toISOString(),
+    const db = useDrizzle()
+
+    const whereConditions = [isNotNull(tables.servers.nodeId)]
+    if (!includeAll) {
+      whereConditions.push(eq(tables.servers.ownerId, user.id))
+    }
+
+    const servers = db
+      .select({
+        server: tables.servers,
+        node: tables.wingsNodes,
+      })
+      .from(tables.servers)
+      .leftJoin(tables.wingsNodes, eq(tables.servers.nodeId, tables.wingsNodes.id))
+      .where(and(...whereConditions))
+      .orderBy(desc(tables.servers.updatedAt)) 
+      .all()
+
+    const records: ServerListEntry[] = servers
+      .map(({ server, node }) => ({
+        uuid: server.uuid,
+        identifier: server.identifier,
+        name: server.name,
+        nodeId: server.nodeId!,
+        nodeName: node?.name || 'Unknown Node',
+        description: server.description || null,
+        limits: null,
+        featureLimits: null,
+        status: server.status || 'unknown',
+        ownership: includeAll ? 'shared' : 'mine',
+        suspended: server.suspended || false,
+        isTransferring: false,
+      }))
+
+    return {
+      data: records,
+      generatedAt: new Date().toISOString(),
+    }
+  } catch (error) {
+    console.error('[GET] /api/servers: Error fetching servers:', error)
+    if (error && typeof error === 'object' && 'statusCode' in error) {
+      throw error
+    }
+    throw createError({
+      statusCode: 500,
+      statusMessage: 'Internal Server Error',
+      message: error instanceof Error ? error.message : 'Failed to fetch servers',
+    })
   }
 })

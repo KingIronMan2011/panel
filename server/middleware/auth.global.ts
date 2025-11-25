@@ -1,5 +1,6 @@
 import { createError, defineEventHandler, sendRedirect } from 'h3'
-import { getAuth } from '~~/server/utils/auth'
+import { resolveSessionUser } from '~~/server/utils/auth/sessionUser'
+import { getServerSession } from '~~/server/utils/session'
 import type { AuthContext } from '#shared/types/auth'
 
 const PUBLIC_ASSET_PREFIXES = [
@@ -35,6 +36,8 @@ const PUBLIC_API_PATTERNS = [
   /^\/api\/branding(?:\/|$)/,
   /^\/api\/remote(?:\/|$)/,
   /^\/api\/application(?:\/|$)/,
+  /^\/api\/_nuxt_icon(?:\/|$)/,
+  /^\/api\/_nuxt(?:\/|$)/, 
 ]
 
 function isAssetPath(path: string): boolean {
@@ -86,10 +89,7 @@ export default defineEventHandler(async (event) => {
     return
   }
 
-  const auth = getAuth()
-  const session = await auth.api.getSession({
-    headers: event.req.headers,
-  })
+  const session = await getServerSession(event)
 
   if (!session?.user?.id) {
     if (isApiRequest) {
@@ -113,7 +113,29 @@ export default defineEventHandler(async (event) => {
     return
   }
 
-  const user = session.user
+  const user = resolveSessionUser(session)
+
+  if (!user) {
+    if (isApiRequest) {
+      throw createError({
+        statusCode: 401,
+        statusMessage: 'Unauthorized',
+        message: 'Invalid session user.',
+      })
+    }
+
+    const searchParams = new URLSearchParams()
+    if (path !== '/auth/login' && !path.startsWith('/auth/')) {
+      searchParams.set('redirect', requestUrl)
+    }
+
+    const redirectTarget = searchParams.size > 0
+      ? `/auth/login?${searchParams.toString()}`
+      : '/auth/login'
+
+    await sendRedirect(event, redirectTarget, 302)
+    return
+  }
 
   ;(event.context as { auth?: AuthContext }).auth = {
     session,

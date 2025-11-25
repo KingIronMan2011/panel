@@ -4,9 +4,35 @@ import { computed } from 'vue'
 const route = useRoute()
 const serverId = computed(() => route.params.id as string)
 
-const serverTitle = computed(() => {
-  const title = route.meta.serverTitle
-  return typeof title === 'string' && title.length > 0 ? title : `Server ${serverId.value}`
+const { data: serverResponse } = await useFetch(
+  `/api/servers/${serverId.value}`,
+  {
+    watch: [serverId],
+    key: `server-${serverId.value}`,
+    immediate: true,
+  },
+)
+
+const server = computed(() => {
+  const response = serverResponse.value as { data: { name: string; identifier: string } } | null
+  if (import.meta.dev) {
+    console.log('[Server Layout] serverResponse.value:', serverResponse.value)
+    console.log('[Server Layout] server data:', response?.data)
+  }
+  return response?.data ?? null
+})
+
+const serverName = computed(() => {
+  const name = server.value?.name
+  if (import.meta.dev) {
+    console.log('[Server Layout] serverName computed:', name)
+  }
+  return name && name.trim() ? name : 'Server'
+})
+
+const serverIdentifier = computed(() => {
+  const identifier = server.value?.identifier
+  return identifier || serverId.value
 })
 
 const navItems = computed(() => {
@@ -63,6 +89,12 @@ const navItems = computed(() => {
       active: currentPath.startsWith(`${basePath}/network`),
     },
     {
+      label: 'Startup',
+      icon: 'i-lucide-rocket',
+      to: `${basePath}/startup`,
+      active: currentPath.startsWith(`${basePath}/startup`),
+    },
+    {
       label: 'Settings',
       icon: 'i-lucide-cog',
       to: `${basePath}/settings`,
@@ -103,11 +135,12 @@ const navItems = computed(() => {
         <header class="border-b border-default bg-background/70 backdrop-blur">
           <div class="mx-auto flex w-full max-w-7xl flex-wrap items-center justify-between gap-4 px-6 py-5">
             <div>
-              <h1 class="text-xl font-semibold text-foreground">{{ serverTitle }}</h1>
-              <p class="text-xs text-muted-foreground">Manage this instance via the tabs below.</p>
+              <h1 class="text-xl font-semibold text-foreground">{{ serverName }}</h1>
+              <p class="text-xs text-muted-foreground">{{ serverIdentifier }}</p>
             </div>
             <div class="flex items-center gap-2">
-              <UButton icon="i-lucide-cog" variant="ghost" color="neutral" :to="`/server/${serverId}/settings`">Settings
+              <UButton icon="i-lucide-cog" variant="ghost" color="neutral" :to="`/server/${serverId.value}/settings`">
+                Settings
               </UButton>
             </div>
           </div>

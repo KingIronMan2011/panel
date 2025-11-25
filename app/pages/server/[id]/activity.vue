@@ -10,9 +10,8 @@ definePageMeta({
 
 const serverId = computed(() => route.params.id as string)
 
-const { data: activityData, pending, error } = await useAsyncData(
-  `server-${serverId.value}-activity`,
-  () => $fetch<{ data: ServerActivityEvent[]; generatedAt: string }>(`/api/servers/${serverId.value}/activity`),
+const { data: activityData, pending, error } = await useFetch<{ data: ServerActivityEvent[]; generatedAt: string }>(
+  `/api/servers/${serverId.value}/activity`,
   {
     watch: [serverId],
   },

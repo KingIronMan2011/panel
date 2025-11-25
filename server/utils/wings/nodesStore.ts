@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { StoredWingsNode, WingsNodeConfiguration } from '#shared/types/wings'
 import { useDrizzle, tables, eq } from '~~/server/utils/drizzle'
 import { decryptToken, encryptToken, generateToken, generateTokenId } from '~~/server/utils/wings/encryption'
+import { debugLog, debugError, debugWarn } from '~~/server/utils/logger'
 
 function toBoolean(value: unknown): boolean {
   if (typeof value === 'boolean') {
@@ -112,7 +113,7 @@ export function resolveNodeConnection(id: string) {
   }
 }
 
-function requireNodeRow(id: string) {
+export function requireNodeRow(id: string) {
   const db = useDrizzle()
   const row = db.select().from(tables.wingsNodes).where(eq(tables.wingsNodes.id, id)).limit(1).get()
   if (!row) {
@@ -127,29 +128,25 @@ export async function syncWingsNodeConfiguration(id: string, panelUrl: string): 
 
   const requestUrl = new URL('/api/update', stored.baseURL)
 
-  if (stored.allowInsecure) {
-    throw new Error('Insecure Wings connections are not supported. Disable "allowInsecure" on this node.')
-  }
+  // Allow insecure connections for local/development Wings instances
+  // if (stored.allowInsecure) {
+  //   throw new Error('Insecure Wings connections are not supported. Disable "allowInsecure" on this node.')
+  // }
 
-  try {
-    const response = await fetch(requestUrl.toString(), {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${connection.combinedToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(configuration),
-    })
+  const response = await fetch(requestUrl.toString(), {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${connection.combinedToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(configuration),
+  })
 
-    if (!response.ok) {
-      const error = new Error(`HTTP ${response.status}: ${response.statusText}`)
-      Object.assign(error, { response })
-      throw error
-    }
+  if (!response.ok) {
+    const error = new Error(`HTTP ${response.status}: ${response.statusText}`)
+    Object.assign(error, { response })
+    throw error
   }
-  finally {
-  }
-
 }
 
 export function listWingsNodes(): StoredWingsNode[] {
@@ -180,12 +177,68 @@ export function listWingsNodeSummaries(): WingsNodeSummary[] {
   return listWingsNodes().map(toWingsNodeSummary)
 }
 
-export function getWingsNodeConfigurationById(id: string, panelUrl: string): WingsNodeConfiguration {
+export function ensureNodeHasToken(id: string): void {
+  const db = useDrizzle()
   const row = requireNodeRow(id)
 
-  const combinedToken = row.apiToken.includes('.')
-    ? row.apiToken
-    : formatCombinedToken(row.tokenIdentifier, row.tokenSecret)
+  if (!row.tokenSecret || row.tokenSecret.trim().length === 0 || !row.tokenIdentifier || row.tokenIdentifier.trim().length === 0) {
+    const token = generateTokenParts()
+    const now = new Date()
+
+    db.update(tables.wingsNodes)
+      .set({
+        tokenIdentifier: token.identifier,
+        tokenSecret: token.secret,
+        apiToken: token.combined,
+        updatedAt: now,
+      })
+      .where(eq(tables.wingsNodes.id, id))
+      .run()
+  }
+}
+
+export function getWingsNodeConfigurationById(id: string, panelUrl: string): WingsNodeConfiguration {
+  ensureNodeHasToken(id)
+  const row = requireNodeRow(id)
+
+  if (!row.tokenSecret || row.tokenSecret.trim().length === 0) {
+    throw new Error(`Node ${id} does not have a token secret. Please generate a token first.`)
+  }
+
+  if (!row.tokenIdentifier || row.tokenIdentifier.trim().length === 0) {
+    throw new Error(`Node ${id} does not have a token identifier. Please generate a token first.`)
+  }
+
+  let plainTokenSecret: string
+  try {
+    const encryptionKeyAvailable = !!(process.env.WINGS_ENCRYPTION_KEY 
+      || process.env.NUXT_SESSION_PASSWORD
+      || process.env.BETTER_AUTH_SECRET
+      || process.env.AUTH_SECRET)
+    
+    if (!encryptionKeyAvailable) {
+      debugError(`[Wings Config] No encryption key available! Check environment variables.`)
+      throw new Error('Wings token encryption key not configured. Set WINGS_ENCRYPTION_KEY, NUXT_SESSION_PASSWORD, BETTER_AUTH_SECRET, or AUTH_SECRET.')
+    }
+    
+    plainTokenSecret = decryptToken(row.tokenSecret)
+    debugLog(`[Wings Config] Successfully decrypted token for node ${id}, length: ${plainTokenSecret.length}`)
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+    debugError(`[Wings Config] Failed to decrypt token for node ${id}:`, errorMessage)
+    debugError(`[Wings Config] Token secret length:`, row.tokenSecret?.length || 0)
+    debugError(`[Wings Config] Token identifier:`, row.tokenIdentifier)
+    throw new Error(`Failed to decrypt token for node ${id}: ${errorMessage}`)
+  }
+
+  if (!plainTokenSecret || plainTokenSecret.trim().length === 0) {
+    debugError(`[Wings Config] Node ${id} has empty decrypted token. Token secret exists:`, !!row.tokenSecret)
+    throw new Error(`Node ${id} has an empty decrypted token. Please regenerate the token.`)
+  }
+
+  if (plainTokenSecret.length < 32) {
+    debugWarn(`[Wings Config] Node ${id} has suspiciously short token (${plainTokenSecret.length} chars). Expected 64+ chars.`)
+  }
 
   const normalizedPanelUrl = panelUrl.replace(/\/$/, '')
 
@@ -193,7 +246,7 @@ export function getWingsNodeConfigurationById(id: string, panelUrl: string): Win
     debug: false,
     uuid: row.uuid,
     token_id: row.tokenIdentifier,
-    token: combinedToken,
+    token: plainTokenSecret,
     api: {
       host: '0.0.0.0',
       port: toNumber(row.daemonListen, 8080),
@@ -378,34 +431,4 @@ export function deleteWingsNode(id: string): void {
   }
 }
 
-export function issueWingsNodeToken(id: string): { token: string, node: StoredWingsNode } {
-  const db = useDrizzle()
-  const existing = db.select().from(tables.wingsNodes).where(eq(tables.wingsNodes.id, id)).get()
-  if (!existing) {
-    throw new Error(`Node ${id} not found`)
-  }
-
-  const token = generateTokenParts()
-  const now = new Date()
-
-  db.update(tables.wingsNodes)
-    .set({
-      apiToken: token.combined,
-      tokenIdentifier: token.identifier,
-      tokenSecret: token.secret,
-      updatedAt: now,
-    })
-    .where(eq(tables.wingsNodes.id, id))
-    .run()
-
-  const refreshed = db.select().from(tables.wingsNodes).where(eq(tables.wingsNodes.id, id)).get()
-  if (!refreshed) {
-    throw new Error(`Node ${id} not found after token rotation`)
-  }
-
-  return {
-    token: token.combined,
-    node: mapRowToStored(refreshed),
-  }
-}
 

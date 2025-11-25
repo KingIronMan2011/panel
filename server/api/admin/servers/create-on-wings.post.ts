@@ -1,6 +1,10 @@
+import { createError } from 'h3'
+import { getServerSession } from '~~/server/utils/session'
+import { requireAdmin } from '~~/server/utils/api-helpers'
+import { useDrizzle, tables, eq } from '~~/server/utils/drizzle'
+import { provisionServerOnWings } from '~~/server/utils/server-provisioning'
 
 export default defineEventHandler(async (event) => {
-  const { getServerSession } = await import('~~/server/utils/session')
   const session = await getServerSession(event)
   if (!session?.user) {
     throw createError({
@@ -9,8 +13,10 @@ export default defineEventHandler(async (event) => {
     })
   }
 
+  await requireAdmin(event)
+
   const body = await readBody(event)
-  const { serverId, startOnCompletion = true } = body
+  const { serverId } = body
 
   if (!serverId) {
     throw createError({
@@ -19,7 +25,6 @@ export default defineEventHandler(async (event) => {
     })
   }
 
-  const { useDrizzle, tables, eq } = await import('../../../utils/drizzle')
   const db = useDrizzle()
 
   const server = db
@@ -35,92 +40,49 @@ export default defineEventHandler(async (event) => {
     })
   }
 
-  if (!server.nodeId) {
+  if (!server.nodeId || !server.eggId) {
     throw createError({
       statusCode: 400,
-      message: 'Server has no node assigned',
+      message: 'Server is missing required configuration (node or egg)',
     })
   }
 
-  const { requireAdmin } = await import('../../../utils/api-helpers')
-  await requireAdmin(event)
+  const allocations = db
+    .select()
+    .from(tables.serverAllocations)
+    .where(eq(tables.serverAllocations.serverId, server.id))
+    .all()
 
-  const { getWingsClientForServer } = await import('../../../utils/wings-client')
-  const { client } = await getWingsClientForServer(server.uuid)
+  const primaryAllocation = allocations.find(a => a.isPrimary)
+  if (!primaryAllocation) {
+    throw createError({
+      statusCode: 400,
+      message: 'Server has no primary allocation assigned',
+    })
+  }
+
+  const { startOnCompletion = true } = body
 
   try {
-
-    const limits = db
-      .select()
-      .from(tables.serverLimits)
-      .where(eq(tables.serverLimits.serverId, server.id))
-      .get()
-
-    const allAllocations = db
-      .select()
-      .from(tables.serverAllocations)
-      .where(eq(tables.serverAllocations.serverId, server.id))
-      .all() || []
-
-    const primaryAllocation = allAllocations.find(a => a.isPrimary)
-
-    const egg = db
-      .select()
-      .from(tables.eggs)
-      .where(eq(tables.eggs.id, server.eggId!))
-      .get()
-
-    const config = {
-      uuid: server.uuid,
-      suspended: server.suspended || false,
+    await provisionServerOnWings({
+      serverId: server.id,
+      serverUuid: server.uuid,
+      eggId: server.eggId,
+      nodeId: server.nodeId,
+      allocationId: primaryAllocation.id,
       environment: {},
-      invocation: egg?.startup || '',
-      skip_egg_scripts: false,
-      start_on_completion: startOnCompletion,
-      build: {
-        memory_limit: limits?.memory || 512,
-        swap: limits?.swap || 0,
-        io_weight: limits?.io || 500,
-        cpu_limit: limits?.cpu || 100,
-        threads: limits?.threads || null,
-        disk_space: limits?.disk || 1024,
-        oom_disabled: limits?.oomDisabled || true,
-      },
-      container: {
-        image: server.image || egg?.dockerImage || 'ghcr.io/pterodactyl/yolks:java_17',
-        oom_disabled: limits?.oomDisabled || true,
-        requires_rebuild: false,
-      },
-      allocations: {
-        default: primaryAllocation
-          ? {
-              ip: primaryAllocation.ip,
-              port: primaryAllocation.port,
-            }
-          : {
-              ip: '0.0.0.0',
-              port: 25565,
-            },
-        mappings: {},
-      },
-      mounts: [],
-      egg: {
-        id: server.eggId || '',
-        file_denylist: [],
-      },
-    }
-
-    await client.createServer(server.uuid, config)
+      startOnCompletion,
+    })
 
     return {
       success: true,
-      message: 'Server created on Wings successfully',
+      message: 'Server provisioned on Wings successfully',
     }
   } catch (error) {
-    console.error('Failed to create server on Wings:', error)
+    console.error('Failed to provision server on Wings:', error)
     throw createError({
       statusCode: 500,
-      message: error instanceof Error ? error.message : 'Failed to create server on Wings',
+      message: error instanceof Error ? error.message : 'Failed to provision server on Wings',
     })
   }
 })

@@ -1,4 +1,4 @@
-import { createError, getQuery } from 'h3'
+import { createError, getQuery, getRouterParam } from 'h3'
 import { desc, eq } from 'drizzle-orm'
 import { getServerSession } from '~~/server/utils/session'
 import { resolveSessionUser } from '~~/server/utils/auth/sessionUser'
@@ -35,7 +35,7 @@ function parseMetadata(raw: string | null): Record<string, unknown> | null {
 }
 
 export default defineEventHandler(async (event) => {
-  const identifier = event.context.params?.id
+  const identifier = getRouterParam(event, 'id') || event.context.params?.id
   if (!identifier || typeof identifier !== 'string') {
     throw createError({ statusCode: 400, statusMessage: 'Bad Request', message: 'Missing server identifier' })
   }

@@ -14,12 +14,12 @@ const {
   data: limitsData,
   pending: limitsPending,
   refresh: refreshLimits,
-} = await useAsyncData<ServerLimits | null>(
+} = await useAsyncData(
   `server-limits-${props.server.id}`,
   async () => {
     try {
-      const response = await $fetch<{ data: ServerLimits }>(`/api/admin/servers/${props.server.id}/limits`)
-      return response.data
+      const response = await $fetch(`/api/admin/servers/${props.server.id}/limits`)
+      return ((response as any)?.data ?? null) as ServerLimits | null
     }
     catch (error) {
       console.error('Failed to load server limits', error)
@@ -34,16 +34,16 @@ const {
 const limits = computed(() => limitsData.value)
 
 const schema = z.object({
-  cpu: z.number({ invalid_type_error: 'CPU limit must be a number' }).min(0, 'CPU limit cannot be negative'),
+  cpu: z.coerce.number().min(0, 'CPU limit cannot be negative'),
   threads: z.union([
     z.string().trim().min(1).max(191),
     z.literal('').transform(() => null),
     z.null(),
   ]).transform(value => (value === '' ? null : value)),
-  memory: z.number({ invalid_type_error: 'Memory limit must be a number' }).min(0, 'Memory limit cannot be negative'),
-  swap: z.number({ invalid_type_error: 'Swap must be a number' }).min(-1, 'Swap must be -1 or greater'),
-  disk: z.number({ invalid_type_error: 'Disk limit must be a number' }).min(0, 'Disk limit cannot be negative'),
-  io: z.number({ invalid_type_error: 'Block I/O must be a number' }).min(10, 'Block I/O must be at least 10').max(1000, 'Block I/O cannot exceed 1000'),
+  memory: z.coerce.number().min(0, 'Memory limit cannot be negative'),
+  swap: z.coerce.number().min(-1, 'Swap must be -1 or greater'),
+  disk: z.coerce.number().min(0, 'Disk limit cannot be negative'),
+  io: z.coerce.number().min(10, 'Block I/O must be at least 10').max(1000, 'Block I/O cannot exceed 1000'),
 })
 
 type FormSchema = z.infer<typeof schema>
@@ -62,8 +62,18 @@ function createFormState(payload: ServerLimits | null): FormSchema {
 const form = reactive<FormSchema>(createFormState(limits.value))
 
 watch(limits, (value) => {
-  Object.assign(form, createFormState(value))
-})
+  if (value) {
+    const newState = createFormState(value)
+    console.log('[Build Form] Limits updated, refreshing form:', {
+      old: { ...form },
+      new: newState,
+    })
+    Object.assign(form, newState)
+  } else {
+    const defaultState = createFormState(null)
+    Object.assign(form, defaultState)
+  }
+}, { immediate: true, deep: true })
 
 async function handleSubmit(event: FormSubmitEvent<FormSchema>) {
   if (isSubmitting.value)
@@ -72,24 +82,82 @@ async function handleSubmit(event: FormSubmitEvent<FormSchema>) {
   isSubmitting.value = true
 
   try {
-    await $fetch(`/api/admin/servers/${props.server.id}/build`, {
-      method: 'PATCH',
-      body: {
-        ...event.data,
-        threads: event.data.threads ?? null,
-      },
+    const payload = {
+      cpu: event.data.cpu ?? 0,
+      memory: event.data.memory ?? 0,
+      swap: event.data.swap ?? 0,
+      disk: event.data.disk ?? 0,
+      io: event.data.io ?? 500,
+      threads: event.data.threads ?? null,
+    }
+
+    console.log('[Build Form] Sending update:', { 
+      serverId: props.server.id,
+      serverUuid: props.server.uuid,
+      payload,
+      url: `/api/admin/servers/${props.server.id}/build`,
     })
 
-    Object.assign(form, event.data)
+    let response: unknown
+    try {
+      response = await $fetch(`/api/admin/servers/${props.server.id}/build`, {
+        method: 'patch',
+        body: payload,
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+      })
+
+      console.log('[Build Form] Update response:', response)
+      console.log('[Build Form] Response type:', typeof response)
+      console.log('[Build Form] Response keys:', response ? Object.keys(response) : 'null')
+      
+      if (typeof response === 'string' && response.includes('<!DOCTYPE html>')) {
+        console.error('[Build Form] CRITICAL: Received HTML instead of JSON! Route not matching!')
+        throw new Error('Route not found - received HTML instead of JSON. The API endpoint may not be registered. Please restart the dev server.')
+      }
+      
+      const responseObj = response as { success?: boolean } | null
+      if (!response || (typeof response === 'object' && responseObj && 'success' in responseObj && !responseObj.success)) {
+        console.warn('[Build Form] Response does not indicate success:', response)
+      }
+    } catch (fetchError: unknown) {
+      const error = fetchError as any
+      console.error('[Build Form] Fetch error:', {
+        error: fetchError,
+        message: error?.message,
+        status: error?.status,
+        statusText: error?.statusText,
+        data: error?.data,
+        response: error?.response,
+        responseText: typeof error?.response === 'string' ? error.response.substring(0, 200) : undefined,
+      })
+      
+      if (error?.response && typeof error.response === 'string' && error.response.includes('<!DOCTYPE html>')) {
+        toast.add({
+          title: 'Route Error',
+          description: 'The API endpoint is not registered. Please restart the dev server.',
+          color: 'error',
+        })
+        throw new Error('API route not found - dev server may need restart')
+      }
+      
+      throw fetchError
+    }
+
+    console.log('[Build Form] Refreshing limits from server...')
     await refreshLimits()
+    console.log('[Build Form] Limits refreshed:', limitsData.value)
 
     toast.add({
       title: 'Build updated',
-      description: 'Server resource limits have been saved',
+      description: 'Server resource limits have been saved and synced with Wings',
       color: 'success',
     })
   }
   catch (error) {
+    console.error('[Build Form] Failed to update build configuration:', error)
     const err = error as { data?: { message?: string } }
     toast.add({
       title: 'Error',

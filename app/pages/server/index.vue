@@ -9,13 +9,12 @@ definePageMeta({
   auth: true,
 })
 
-const { data: me } = await useFetch<{ user: { role: string } }>('/api/me', {
+const { data: me } = await useFetch<{ data: { role: string } }>('/api/me', {
   key: 'user-role',
-  default: () => ({ user: { role: 'user' } }),
-  pick: ['user'],
+  default: () => ({ data: { role: 'user' } }),
 })
 
-const isAdmin = computed(() => me.value?.user.role === 'admin')
+const isAdmin = computed(() => me.value?.data?.role === 'admin')
 
 watch(isAdmin, (admin) => {
   if (!admin && showAll.value) {

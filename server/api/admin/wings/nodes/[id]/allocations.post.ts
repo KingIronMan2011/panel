@@ -3,6 +3,7 @@ import { eq, and } from 'drizzle-orm'
 import { getServerSession, isAdmin  } from '~~/server/utils/session'
 import { useDrizzle, tables } from '~~/server/utils/drizzle'
 import { randomUUID } from 'node:crypto'
+import { parseCidr, parsePorts, CidrOutOfRangeError, InvalidIpAddressError } from '~~/server/utils/ip-utils'
 
 export default defineEventHandler(async (event) => {
   const { id: nodeId } = event.context.params ?? {}
@@ -28,23 +29,48 @@ export default defineEventHandler(async (event) => {
 
   const body = await readBody(event)
 
-  if (!body.ip || !Array.isArray(body.ip) || body.ip.length === 0) {
-    throw createError({ statusCode: 400, statusMessage: 'At least one IP address is required' })
+  let ipAddresses: string[]
+  let ports: number[]
+
+  if (body.ip && typeof body.ip === 'string') {
+    try {
+      ipAddresses = parseCidr(body.ip)
+    } catch (error) {
+      if (error instanceof CidrOutOfRangeError || error instanceof InvalidIpAddressError) {
+        throw createError({ statusCode: 400, statusMessage: error.message })
+      }
+      throw error
+    }
+  } else if (Array.isArray(body.ip) && body.ip.length > 0) {
+    ipAddresses = body.ip as string[]
+    for (const ip of ipAddresses) {
+      if (typeof ip !== 'string') {
+        throw createError({ statusCode: 400, statusMessage: 'IP addresses must be strings' })
+      }
+    }
+  } else {
+    throw createError({ statusCode: 400, statusMessage: 'IP address or CIDR notation is required' })
   }
 
-  if (!body.ports || !Array.isArray(body.ports) || body.ports.length === 0) {
+  if (body.ports) {
+    try {
+      ports = parsePorts(body.ports)
+    } catch (error) {
+      throw createError({
+        statusCode: 400,
+        statusMessage: error instanceof Error ? error.message : 'Invalid port format',
+      })
+    }
+  } else {
     throw createError({ statusCode: 400, statusMessage: 'At least one port is required' })
   }
 
-  const ipAddresses = body.ip as string[]
-  const ports = body.ports as number[]
   const ipAlias = body.ipAlias as string | undefined
 
   const allocationsToCreate: Array<typeof tables.serverAllocations.$inferInsert> = []
 
   for (const ip of ipAddresses) {
     for (const port of ports) {
-
       const existing = db.select()
         .from(tables.serverAllocations)
         .where(and(

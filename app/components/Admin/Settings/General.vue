@@ -129,7 +129,7 @@ watch(logoFile, async (file) => {
 async function removeLogo() {
   try {
     await $fetch('/api/admin/settings/general', {
-      method: 'PATCH',
+      method: 'patch',
       body: {
         brandLogoUrl: null,
         showBrandLogo: false,
@@ -170,7 +170,7 @@ async function handleSubmit(event: FormSubmitEvent<FormSchema>) {
     }
 
     await $fetch('/api/admin/settings/general', {
-      method: 'PATCH',
+      method: 'patch',
       body: payload,
     })
 

@@ -21,11 +21,11 @@ const {
   pending: startupPending,
   refresh,
   error: startupError,
-} = await useAsyncData<StartupResponse | null>(
+} = await useAsyncData(
   `server-startup-${props.server.id}`,
   async () => {
     try {
-      return await $fetch<StartupResponse>(`/api/admin/servers/${props.server.id}/startup`)
+      return await $fetch<any>(`/api/admin/servers/${props.server.id}/startup`) as StartupResponse | null
     }
     catch (error) {
       console.error('Failed to load startup configuration', error)
@@ -37,7 +37,19 @@ const {
   },
 )
 
-const startup = computed(() => startupData.value?.data ?? null)
+const startup = computed(() => (startupData.value as any)?.data ?? null)
+
+const dockerImages = computed(() => {
+  const images = startup.value?.dockerImages || {}
+  return typeof images === 'object' && images !== null ? images : {}
+})
+
+const hasMultipleDockerImages = computed(() => Object.keys(dockerImages.value).length > 1)
+const isCustomDockerImage = computed(() => {
+  if (!startup.value?.dockerImage) return false
+  const currentImage = startup.value.dockerImage
+  return !Object.values(dockerImages.value).includes(currentImage)
+})
 
 const errorMessage = computed(() => {
   if (!startupError.value) return ''
@@ -55,10 +67,17 @@ const schema = z.object({
 type FormSchema = z.infer<typeof schema>
 
 function createFormState(payload: StartupForm | null): FormSchema {
+  const cleanEnvironment: Record<string, string> = {}
+  if (payload?.environment) {
+    for (const [key, value] of Object.entries(payload.environment)) {
+      cleanEnvironment[key] = value === null || value === undefined ? '' : String(value)
+    }
+  }
+  
   return {
     startup: payload?.startup ?? '',
     dockerImage: payload?.dockerImage ?? '',
-    environment: { ...(payload?.environment ?? {}) },
+    environment: cleanEnvironment,
   }
 }
 
@@ -68,22 +87,13 @@ watch(startup, (value) => {
   Object.assign(form, createFormState(value))
 })
 
-const environmentVars = computed<EnvironmentEntry[]>(() =>
-  Object.entries(form.environment).map(([key, value]) => ({ key, value })),
+const environmentVars = computed(() =>
+  Object.entries(form.environment).map(([key, value]) => ({ key, value: String(value) } as EnvironmentEntry)),
 )
 
 function updateEnvVar(key: string, value: EnvironmentInputValue) {
-  if (value === null || value === undefined) {
-    form.environment[key] = ''
-    return
-  }
-
-  if (typeof value === 'string') {
-    form.environment[key] = value
-    return
-  }
-
-  form.environment[key] = String(value)
+  const stringValue = value === null || value === undefined ? '' : String(value)
+  form.environment[key] = stringValue
 }
 
 function removeEnvVar(key: string) {
@@ -106,16 +116,28 @@ function addEnvVar() {
 }
 
 async function handleSubmit(event: FormSubmitEvent<FormSchema>) {
-  if (isSubmitting.value)
+  console.log('[Admin Startup] Form submit triggered!', {
+    serverId: props.server.id,
+    formData: event.data,
+    timestamp: new Date().toISOString(),
+  })
+
+  if (isSubmitting.value) {
+    console.warn('[Admin Startup] Already submitting, ignoring duplicate submit')
     return
+  }
 
   isSubmitting.value = true
 
   try {
-    await $fetch(`/api/admin/servers/${props.server.id}/startup`, {
-      method: 'PATCH',
+    console.log('[Admin Startup] Making PATCH request to:', `/api/admin/servers/${props.server.id}/startup`)
+    
+    const response = await $fetch(`/api/admin/servers/${props.server.id}/startup`, {
+      method: 'patch',
       body: event.data,
     })
+    
+    console.log('[Admin Startup] PATCH request successful:', response)
 
     Object.assign(form, event.data)
 
@@ -128,6 +150,7 @@ async function handleSubmit(event: FormSubmitEvent<FormSchema>) {
     await refresh()
   }
   catch (error) {
+    console.error('[Admin Startup] PATCH request failed:', error)
     const err = error as { data?: { message?: string } }
     toast.add({
       title: 'Error',
@@ -184,9 +207,30 @@ async function handleSubmit(event: FormSubmitEvent<FormSchema>) {
         </UFormField>
 
         <UFormField label="Docker Image" name="dockerImage" required>
-          <UInput v-model="form.dockerImage" placeholder="ghcr.io/pterodactyl/yolks:java-21" class="w-full" />
+          <USelect
+            v-if="hasMultipleDockerImages && !isCustomDockerImage"
+            v-model="form.dockerImage"
+            :options="Object.entries(dockerImages).map(([key, value]) => ({ label: `${key} (${value})`, value }))"
+            placeholder="Select Docker image"
+            class="w-full"
+          />
+          <UInput
+            v-else
+            v-model="form.dockerImage"
+            placeholder="ghcr.io/pterodactyl/yolks:java-21"
+            class="w-full"
+          />
+          
           <template #help>
-            The Docker image to use for this server
+            <span v-if="hasMultipleDockerImages && !isCustomDockerImage">
+              Select a Docker image from the egg's available images. This is an advanced feature allowing you to select a Docker image to use when running this server instance.
+            </span>
+            <span v-else-if="!hasMultipleDockerImages">
+              The Docker image to use for this server (from egg: {{ Object.keys(dockerImages)[0] || 'N/A' }})
+            </span>
+            <span v-else>
+              Custom Docker image. Select from dropdown above to use an egg image.
+            </span>
           </template>
         </UFormField>
       </div>

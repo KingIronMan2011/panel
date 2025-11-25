@@ -7,8 +7,13 @@ export async function generateWingsJWT(
   node: { tokenSecret: string; baseUrl: string },
   options: WingsJWTOptions = {}
 ): Promise<string> {
-
-  const signingKey = decryptToken(node.tokenSecret)
+  let signingKey: string
+  try {
+    signingKey = decryptToken(node.tokenSecret)
+  } catch {
+    signingKey = node.tokenSecret
+  }
+  
   const secret = new TextEncoder().encode(signingKey)
 
   const identifier = options.identifiedBy
@@ -51,7 +56,13 @@ export async function verifyWingsJWT(
   token: string,
   node: { tokenSecret: string; baseUrl: string }
 ): Promise<WingsJWTClaims> {
-  const signingKey = decryptToken(node.tokenSecret)
+  let signingKey: string
+  try {
+    signingKey = decryptToken(node.tokenSecret)
+  } catch {
+    signingKey = node.tokenSecret
+  }
+  
   const secret = new TextEncoder().encode(signingKey)
 
   try {
@@ -107,5 +118,15 @@ function randomString(length: number): string {
 }
 
 function getAppUrl(): string {
-  return process.env.NUXT_PUBLIC_APP_URL || process.env.APP_URL || 'http://localhost:3000'
+  const appUrl = process.env.NUXT_PUBLIC_APP_URL || process.env.APP_URL
+  
+  if (appUrl) {
+    return appUrl
+  }
+  
+  if (process.env.NODE_ENV === 'production' && !appUrl) {
+    console.warn('[Wings JWT] APP_URL not set in production! Using localhost. Set NUXT_PUBLIC_APP_URL or APP_URL environment variable.')
+  }
+  
+  return 'http://localhost:3000'
 }

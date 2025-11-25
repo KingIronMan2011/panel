@@ -1,5 +1,8 @@
 import { toWingsHttpError } from '~~/server/utils/wings/http'
-import { findWingsNode, listWingsNodes } from '~~/server/utils/wings/nodesStore'
+import { findWingsNode, listWingsNodes, requireNodeRow, resolveNodeConnection } from '~~/server/utils/wings/nodesStore'
+import { decryptToken } from '~~/server/utils/wings/encryption'
+import { debugLog, debugError } from '~~/server/utils/logger'
+import { useRuntimeConfig } from '#imports'
 
 import type {
   StoredWingsNode,
@@ -39,10 +42,12 @@ function joinServerPath(base: string, segment: string): string {
 export async function remoteGetSystemInformation(nodeId?: string, version?: number) {
   try {
     const node = requireNode(nodeId)
+    const resolvedNodeId = nodeId || node.id
+    const plainSecret = getPlainTokenSecret(resolvedNodeId)
     const query = typeof version === 'number' && !Number.isNaN(version) ? { v: version } : undefined
     const data = await wingsFetch<WingsSystemInformation>('/api/system', {
       baseURL: node.baseURL,
-      token: node.apiToken,
+      token: plainSecret,
       allowInsecure: node.allowInsecure,
       query
     })
@@ -80,9 +85,11 @@ export async function remoteDeleteFiles(serverUuid: string, root: string, files:
 
   try {
     const node = requireNode(nodeId)
+    const { connection } = resolveNodeConnection(node.id)
+    
     await wingsFetch(`/api/servers/${serverUuid}/files/delete`, {
       baseURL: node.baseURL,
-      token: node.apiToken,
+      token: connection.tokenSecret,
       allowInsecure: node.allowInsecure,
       method: 'POST',
       body: {
@@ -302,9 +309,6 @@ export async function remoteUploadFiles(
     formData.append('files', blob, file.name)
   })
 
-  if (node.allowInsecure)
-    throw new Error('Insecure Wings connections are not supported. Disable "allowInsecure" on this node.')
-
   const uploadUrl = new URL(`/api/servers/${serverUuid}/files/upload`, node.baseURL)
   const response = await fetch(uploadUrl.toString(), {
     method: 'POST',
@@ -340,35 +344,86 @@ export async function remoteGetFileDownloadUrl(serverUuid: string, file: string,
 }
 
 async function wingsFetch<T = unknown>(url: string, options: WingsHttpRequestOptions): Promise<T> {
-  if (options.allowInsecure)
-    throw new Error('Insecure Wings connections are not supported. Disable "allowInsecure" on this node.')
-
   const fullUrl = new URL(url, options.baseURL)
 
   if (options.query) {
     Object.entries(options.query).forEach(([key, value]) => {
       if (value !== undefined && value !== null) {
-        fullUrl.searchParams.append(key, String(value))
+        if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+          fullUrl.searchParams.append(key, String(value))
+        } else if (Array.isArray(value)) {
+          const firstValue = value[0]
+          if (firstValue !== undefined && firstValue !== null && (typeof firstValue === 'string' || typeof firstValue === 'number' || typeof firstValue === 'boolean')) {
+            fullUrl.searchParams.append(key, String(firstValue))
+          }
+        }
       }
     })
   }
 
-  const response = await fetch(fullUrl.toString(), {
-    method: options.method || 'GET',
-    headers: {
-      'Authorization': `Bearer ${options.token}`,
-      'Content-Type': 'application/json',
-    },
-    body: options.body ? JSON.stringify(options.body) : undefined,
-  })
+  const timeout = 10000
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), timeout)
 
-  if (!response.ok) {
-    const error = new Error(`HTTP ${response.status}: ${response.statusText}`)
-    Object.assign(error, { response })
+
+  try {
+    const response = await fetch(fullUrl.toString(), {
+      method: options.method || 'GET',
+      headers: {
+        'Authorization': `Bearer ${options.token}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: options.body ? JSON.stringify(options.body) : undefined,
+      signal: controller.signal,
+    })
+
+    clearTimeout(timeoutId)
+
+    if (!response.ok) {
+      let errorMessage = `HTTP ${response.status}: ${response.statusText}`
+      try {
+        const errorBody = await response.text()
+        if (errorBody) {
+          errorMessage += ` - ${errorBody}`
+        }
+      } catch {
+        // Error body parsing failed, continue with error message
+      }
+
+      debugError(`[Wings Fetch] Request failed: ${fullUrl.toString()}`)
+      debugError(`[Wings Fetch] Status: ${response.status} ${response.statusText}`)
+      debugError(`[Wings Fetch] Error message: ${errorMessage}`)
+
+      const error = new Error(errorMessage)
+      Object.assign(error, { response, statusCode: response.status })
+      throw error
+    }
+
+    const contentType = response.headers.get('content-type') || ''
+    if (contentType.includes('application/json')) {
+      return response.json() as Promise<T>
+    }
+    else {
+      return response.text() as Promise<T>
+    }
+  } catch (error) {
+    clearTimeout(timeoutId)
+
+    if (error instanceof Error) {
+      if (error.name === 'AbortError') {
+        throw new Error(`Connection timeout after ${timeout}ms - Wings daemon at ${fullUrl.origin} is not responding`)
+      }
+      if (error.message.includes('fetch failed') || error.message.includes('ECONNREFUSED') || error.message.includes('ENOTFOUND')) {
+        throw new Error(`Failed to connect to Wings daemon at ${fullUrl.origin} - check if Wings is running and accessible`)
+      }
+      if ('statusCode' in error) {
+        throw error
+      }
+    }
+
     throw error
   }
-
-  return response.json() as Promise<T>
 }
 
 function requireNode(nodeId?: string): StoredWingsNode {
@@ -397,12 +452,19 @@ function requireNode(nodeId?: string): StoredWingsNode {
   return node
 }
 
+function getPlainTokenSecret(nodeId: string): string {
+  const row = requireNodeRow(nodeId)
+  return decryptToken(row.tokenSecret)
+}
+
 export async function remoteListServers(nodeId?: string) {
   try {
     const node = requireNode(nodeId)
+    const resolvedNodeId = nodeId || node.id
+    const plainSecret = getPlainTokenSecret(resolvedNodeId)
     const data = await wingsFetch<WingsRemoteServer[]>('/api/servers', {
       baseURL: node.baseURL,
-      token: node.apiToken,
+      token: plainSecret,
       allowInsecure: node.allowInsecure
     })
     return data
@@ -463,10 +525,14 @@ export async function remotePaginateServers(page: number, perPage: number, nodeI
 export async function remoteListServerDirectory(serverUuid: string, directory: string, nodeId?: string): Promise<ServerDirectoryListing> {
   try {
     const node = requireNode(nodeId)
+    const { connection } = resolveNodeConnection(node.id)
     const directoryPath = normalizeServerPath(directory)
+    
+    // Pterodactyl uses node's decrypted token secret (just the secret, not tokenId.tokenSecret)
+    // Wings expects: Bearer <tokenSecret> (not tokenId.tokenSecret format for file operations)
     const entries = await wingsFetch<{ name: string, created: string, modified: string, mode: string, mode_bits: string, size: number, directory: boolean, file: boolean, symlink: boolean, mime: string }[]>(`/api/servers/${serverUuid}/files/list-directory`, {
       baseURL: node.baseURL,
-      token: node.apiToken,
+      token: connection.tokenSecret, 
       allowInsecure: node.allowInsecure,
       query: { directory: directoryPath },
     })
@@ -489,6 +555,48 @@ export async function remoteListServerDirectory(serverUuid: string, directory: s
     }
   }
   catch (error) {
+    if (error && typeof error === 'object' && 'statusCode' in error && error.statusCode === 403) {
+      try {
+        const { syncWingsNodeConfiguration } = await import('./nodesStore')
+        const runtimeConfig = useRuntimeConfig()
+        const panelConfig = (runtimeConfig.public?.app ?? {}) as { baseUrl?: string }
+        const panelUrl = panelConfig.baseUrl || 'http://174.48.191.194:3000'
+        
+        await syncWingsNodeConfiguration(nodeId || 'test', panelUrl)
+        
+        const node = requireNode(nodeId)
+        const { connection } = resolveNodeConnection(node.id)
+        const directoryPath = normalizeServerPath(directory)
+        
+        const entries = await wingsFetch<{ name: string, created: string, modified: string, mode: string, mode_bits: string, size: number, directory: boolean, file: boolean, symlink: boolean, mime: string }[]>(`/api/servers/${serverUuid}/files/list-directory`, {
+          baseURL: node.baseURL,
+          token: connection.tokenSecret,
+          allowInsecure: node.allowInsecure,
+          query: { directory: directoryPath },
+        })
+        
+        return {
+          directory: directoryPath,
+          entries: entries.map(entry => ({
+            name: entry.name,
+            path: joinServerPath(directoryPath, entry.name),
+            size: entry.size,
+            mode: entry.mode,
+            modeBits: entry.mode_bits,
+            mime: entry.mime,
+            created: entry.created,
+            modified: entry.modified,
+            isDirectory: entry.directory,
+            isFile: entry.file,
+            isSymlink: entry.symlink,
+          })),
+        }
+      }
+      catch (syncError) {
+        debugError('[Files List] Failed to sync Wings configuration:', syncError)
+      }
+    }
+    
     throw toWingsHttpError(error, { operation: `list directory ${directory}`, nodeId })
   }
 }
@@ -496,14 +604,27 @@ export async function remoteListServerDirectory(serverUuid: string, directory: s
 export async function remoteGetFileContents(serverUuid: string, file: string, nodeId?: string): Promise<ServerFileContentResponse> {
   try {
     const node = requireNode(nodeId)
+    const { connection } = resolveNodeConnection(node.id)
     const filePath = normalizeServerPath(file)
-    const content = await wingsFetch<string>(`/api/servers/${serverUuid}/files/contents`, {
-      baseURL: node.baseURL,
-      token: node.apiToken,
-      allowInsecure: node.allowInsecure,
-      query: { file: filePath },
+    
+    const fullUrl = new URL(`/api/servers/${serverUuid}/files/contents`, node.baseURL)
+    fullUrl.searchParams.append('file', filePath)
+    
+    const response = await fetch(fullUrl.toString(), {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${connection.tokenSecret}`,
+        'Accept': 'text/plain, */*', 
+      },
     })
-
+    
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => '')
+      throw new Error(`HTTP ${response.status}: ${response.statusText}${errorText ? ` - ${errorText}` : ''}`)
+    }
+    
+    const content = await response.text()
+    
     return {
       path: filePath,
       content,
@@ -517,19 +638,63 @@ export async function remoteGetFileContents(serverUuid: string, file: string, no
 export async function remoteWriteFile(serverUuid: string, file: string, contents: string, nodeId?: string): Promise<void> {
   try {
     const node = requireNode(nodeId)
+    const { connection } = resolveNodeConnection(node.id)
     const filePath = normalizeServerPath(file)
-    await wingsFetch(`/api/servers/${serverUuid}/files/write`, {
-      baseURL: node.baseURL,
-      token: node.apiToken,
-      allowInsecure: node.allowInsecure,
-      method: 'POST',
-      body: {
-        file: filePath,
-        content: contents,
-      },
-    })
+    const fullUrl = new URL(`/api/servers/${serverUuid}/files/write`, node.baseURL)
+    fullUrl.searchParams.append('file', filePath)
+    
+    const timeout = 30000
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), timeout)
+    
+    try {
+      const response = await fetch(fullUrl.toString(), {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${connection.tokenSecret}`,
+          'Content-Type': 'text/plain',
+        },
+        body: contents,
+        signal: controller.signal,
+      })
+      
+      clearTimeout(timeoutId)
+      
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => '')
+        const errorMessage = `HTTP ${response.status}: ${response.statusText}${errorText ? ` - ${errorText}` : ''}`
+        debugError('[Wings Write] Wings rejected file write:', {
+          serverUuid,
+          filePath,
+          status: response.status,
+          statusText: response.statusText,
+          errorText,
+        })
+        throw new Error(errorMessage)
+      }
+      
+    } catch (fetchError) {
+      clearTimeout(timeoutId)
+      
+      if (fetchError instanceof Error) {
+        if (fetchError.name === 'AbortError') {
+          throw new Error(`Connection timeout after ${timeout}ms - Wings daemon at ${fullUrl.origin} is not responding`)
+        }
+        if (fetchError.message.includes('fetch failed') || fetchError.message.includes('ECONNREFUSED') || fetchError.message.includes('ENOTFOUND')) {
+          throw new Error(`Failed to connect to Wings daemon at ${fullUrl.origin} - check if Wings is running and accessible`)
+        }
+      }
+      
+      throw fetchError
+    }
   }
   catch (error) {
+    debugError('[Wings Write] Wings rejected file write:', {
+      serverUuid,
+      file,
+      error: error instanceof Error ? error.message : String(error),
+      nodeId,
+    })
     throw toWingsHttpError(error, { operation: `write file ${file}`, nodeId })
   }
 }

@@ -30,10 +30,17 @@ const maintenanceActions = [
 
 const actionLoading = ref<string | null>(null)
 const showTransferModal = ref(false)
+const showCreateAllocationModal = ref(false)
 const transferForm = reactive({
   targetNodeId: '',
   serverIds: [] as string[],
 })
+const createAllocationForm = reactive({
+  ip: '',
+  ports: '',
+  ipAlias: '',
+})
+const isCreatingAllocations = ref(false)
 
 const { data: availableNodes } = await useAsyncData(
   'available-nodes',
@@ -472,6 +479,97 @@ async function handleTransferServers() {
   }
 }
 
+function parsePorts(input: string): number[] {
+  const normalized = input.replace(/\s+/g, '')
+  if (normalized.includes('-')) {
+    const [startRaw, endRaw] = normalized.split('-', 2)
+    const start = Number.parseInt(startRaw!, 10)
+    const end = Number.parseInt(endRaw!, 10)
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 1024 || end > 65535 || start > end) {
+      throw new Error('Port range must be between 1024-65535 and start must be less than or equal to end')
+    }
+    const ports: number[] = []
+    for (let port = start; port <= end; port++) {
+      ports.push(port)
+    }
+    if (ports.length > 1000) {
+      throw new Error('Port range cannot exceed 1000 ports')
+    }
+    return ports
+  }
+
+  const segments = normalized.split(',')
+  const ports = segments.map(segment => {
+    const port = Number.parseInt(segment, 10)
+    if (!Number.isFinite(port) || port < 1024 || port > 65535) {
+      throw new Error('Ports must be between 1024 and 65535')
+    }
+    return port
+  })
+
+  return ports
+}
+
+async function handleCreateAllocations() {
+  if (isCreatingAllocations.value) return
+
+  if (!createAllocationForm.ip || !createAllocationForm.ports) {
+    toast.add({
+      title: 'Error',
+      description: 'IP address and ports are required',
+      color: 'error',
+    })
+    return
+  }
+
+  isCreatingAllocations.value = true
+
+  try {
+    const ports = parsePorts(createAllocationForm.ports)
+    const isCidr = createAllocationForm.ip.includes('/')
+    const estimatedCount = isCidr 
+      ? Math.pow(2, 32 - Number.parseInt(createAllocationForm.ip.split('/')[1]!, 10)) * ports.length
+      : ports.length
+
+    if (estimatedCount > 10000) {
+      if (!confirm(`This will create approximately ${estimatedCount.toLocaleString()} allocations. Continue?`)) {
+        isCreatingAllocations.value = false
+        return
+      }
+    }
+
+    await $fetch(`/api/admin/nodes/${nodeId.value}/allocations`, {
+      method: 'POST',
+      body: {
+        ip: createAllocationForm.ip,
+        ports,
+        ipAlias: createAllocationForm.ipAlias || undefined,
+      },
+    })
+
+    toast.add({
+      title: 'Allocations created',
+      description: `Created allocations for ${createAllocationForm.ip} with ${ports.length} port${ports.length === 1 ? '' : 's'}`,
+      color: 'success',
+    })
+
+    showCreateAllocationModal.value = false
+    Object.assign(createAllocationForm, { ip: '', ports: '', ipAlias: '' })
+
+    await allocationTable.refresh()
+    await refreshNode()
+  } catch (error) {
+    const err = error as { data?: { message?: string } }
+    toast.add({
+      title: 'Error',
+      description: err.data?.message || (error instanceof Error ? error.message : 'Failed to create allocations'),
+      color: 'error',
+    })
+  } finally {
+    isCreatingAllocations.value = false
+  }
+}
+
 </script>
 
 <template>
@@ -689,6 +787,9 @@ async function handleTransferServers() {
                     { label: '50 / page', value: 50 },
                     { label: '100 / page', value: 100 },
                   ]" size="sm" />
+                  <UButton icon="i-lucide-plus" color="primary" size="sm" @click="showCreateAllocationModal = true">
+                    Create Allocations
+                  </UButton>
                 </div>
               </div>
             </template>
@@ -823,6 +924,76 @@ async function handleTransferServers() {
             @click="handleTransferServers"
           >
             Transfer Servers
+          </UButton>
+        </div>
+      </template>
+    </UModal>
+
+    <UModal
+      v-model:open="showCreateAllocationModal"
+      title="Create Allocations"
+      description="Add new IP address and port allocations for this node"
+    >
+      <template #body>
+        <div class="space-y-4">
+          <UAlert icon="i-lucide-info">
+            <template #title>Bulk Creation</template>
+            <template #description>
+              <ul class="list-disc list-inside space-y-1 text-sm">
+                <li>IP addresses: Use CIDR notation (e.g., <code>192.168.1.0/24</code>) to create multiple IPs, or a single IP (e.g., <code>192.168.1.1</code>)</li>
+                <li>Ports: Use a range (e.g., <code>25565-25665</code>) or comma-separated list (e.g., <code>25565,25566,25567</code>)</li>
+                <li>CIDR ranges must be between /25 and /32</li>
+                <li>Ports must be between 1024 and 65535</li>
+              </ul>
+            </template>
+          </UAlert>
+
+          <UFormField label="IP Address or CIDR" name="ip" required>
+            <UInput 
+              v-model="createAllocationForm.ip" 
+              placeholder="192.168.1.0/24 or 192.168.1.1"
+              :disabled="isCreatingAllocations"
+            />
+            <template #help>
+              Single IP address (e.g., 192.168.1.1) or CIDR notation (e.g., 192.168.1.0/24) to create multiple IPs
+            </template>
+          </UFormField>
+
+          <UFormField label="Ports" name="ports" required>
+            <UInput 
+              v-model="createAllocationForm.ports" 
+              placeholder="25565-25665 or 25565,25566,25567"
+              :disabled="isCreatingAllocations"
+            />
+            <template #help>
+              Port range (25565-25665) or comma-separated list (25565,25566,25567). Must be between 1024-65535.
+            </template>
+          </UFormField>
+
+          <UFormField label="IP Alias (Optional)" name="ipAlias">
+            <UInput 
+              v-model="createAllocationForm.ipAlias" 
+              placeholder="play.example.com"
+              :disabled="isCreatingAllocations"
+            />
+            <template #help>
+              Optional DNS alias for this IP address
+            </template>
+          </UFormField>
+        </div>
+      </template>
+      <template #footer>
+        <div class="flex justify-end gap-2">
+          <UButton variant="ghost" :disabled="isCreatingAllocations" @click="showCreateAllocationModal = false">
+            Cancel
+          </UButton>
+          <UButton 
+            color="primary" 
+            :loading="isCreatingAllocations" 
+            :disabled="isCreatingAllocations || !createAllocationForm.ip || !createAllocationForm.ports"
+            @click="handleCreateAllocations"
+          >
+            Create Allocations
           </UButton>
         </div>
       </template>

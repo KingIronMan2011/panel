@@ -16,7 +16,8 @@ export const PERMISSIONS = {
 
   'file.create': 'Create files',
   'file.read': 'Read files',
-  'file.update': 'Modify files',
+  'file.write': 'Write/modify files', // Alias for file.update (Wings format)
+  'file.update': 'Modify files', // Panel format
   'file.delete': 'Delete files',
   'file.archive': 'Compress/decompress files',
   'file.sftp': 'Access SFTP',
@@ -136,7 +137,22 @@ export async function getUserPermissions(
   }
 
   if (server.ownerId === userId) {
-    return Object.keys(PERMISSIONS) as Array<keyof typeof PERMISSIONS>
+    const allPermissions = Object.keys(PERMISSIONS) as Array<keyof typeof PERMISSIONS>
+    const wingsPermissions = [
+      'file.write', // (maps to file.update)
+      'file.upload', 
+      'file.download', 
+      'file.copy', 
+      'file.compress', 
+      'file.decompress', 
+      'file.chmod', 
+      'file.rename', 
+      'file.pull', 
+      'websocket.connect', 
+    ] as const
+    
+    const combined = [...allPermissions, ...wingsPermissions]
+    return Array.from(new Set(combined)) as Array<keyof typeof PERMISSIONS>
   }
 
   const subuser = await db

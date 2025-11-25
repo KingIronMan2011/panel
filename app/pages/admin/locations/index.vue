@@ -58,7 +58,7 @@ async function handleSubmit() {
     if (editingLocation.value) {
 
       await $fetch(`/api/admin/locations/${editingLocation.value.id}`, {
-        method: 'PATCH',
+        method: 'patch',
         body: form.value,
       })
       toast.add({ title: 'Location updated', color: 'success' })

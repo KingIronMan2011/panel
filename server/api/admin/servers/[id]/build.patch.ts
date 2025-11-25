@@ -1,9 +1,12 @@
-import { createError } from 'h3'
+import { createError, assertMethod } from 'h3'
 import { getServerSession, isAdmin  } from '~~/server/utils/session'
 import { useDrizzle, tables, eq } from '~~/server/utils/drizzle'
 import { serverBuildSchema } from '#shared/schema/admin/server'
 
 export default defineEventHandler(async (event) => {
+  
+  assertMethod(event, 'PATCH')
+
   const session = await getServerSession(event)
   if (!isAdmin(session)) {
     throw createError({
@@ -12,8 +15,8 @@ export default defineEventHandler(async (event) => {
     })
   }
 
-  const serverId = getRouterParam(event, 'id')
-  if (!serverId) {
+  const identifier = getRouterParam(event, 'id')
+  if (!identifier) {
     throw createError({
       statusCode: 400,
       message: 'Server ID is required',
@@ -24,11 +27,8 @@ export default defineEventHandler(async (event) => {
   const { cpu, memory, swap, disk, io, threads, oomDisabled, databaseLimit, allocationLimit, backupLimit } = body
 
   const db = useDrizzle()
-  const [server] = db.select()
-    .from(tables.servers)
-    .where(eq(tables.servers.id, serverId))
-    .limit(1)
-    .all()
+  const { findServerByIdentifier } = await import('~~/server/utils/serversStore')
+  const server = await findServerByIdentifier(identifier)
 
   if (!server) {
     throw createError({
@@ -37,22 +37,64 @@ export default defineEventHandler(async (event) => {
     })
   }
 
-  const updateData: Record<string, number | string | null> = {}
-  if (cpu !== undefined) updateData.cpu = cpu
-  if (memory !== undefined) updateData.memory = memory
-  if (swap !== undefined) updateData.swap = swap
-  if (disk !== undefined) updateData.disk = disk
-  if (io !== undefined) updateData.io = io
-  if (threads !== undefined) updateData.threads = threads
-  if (databaseLimit !== undefined) updateData.databaseLimit = databaseLimit
-  if (allocationLimit !== undefined) updateData.allocationLimit = allocationLimit
-  if (backupLimit !== undefined) updateData.backupLimit = backupLimit
+  const serverId = server.id
+  const [existingLimits] = db.select()
+    .from(tables.serverLimits)
+    .where(eq(tables.serverLimits.serverId, serverId))
+    .limit(1)
+    .all()
 
-  if (Object.keys(updateData).length > 0) {
+  const updateData = {
+    cpu: typeof cpu === 'number' ? cpu : (existingLimits?.cpu ?? 0),
+    memory: typeof memory === 'number' ? memory : (existingLimits?.memory ?? 0),
+    swap: typeof swap === 'number' ? swap : (existingLimits?.swap ?? 0),
+    disk: typeof disk === 'number' ? disk : (existingLimits?.disk ?? 0),
+    io: typeof io === 'number' ? io : (existingLimits?.io ?? 500),
+    threads: threads !== undefined ? threads : (existingLimits?.threads ?? null),
+    databaseLimit: databaseLimit !== undefined ? databaseLimit : (existingLimits?.databaseLimit ?? null),
+    allocationLimit: allocationLimit !== undefined ? allocationLimit : (existingLimits?.allocationLimit ?? null),
+    backupLimit: backupLimit !== undefined ? backupLimit : (existingLimits?.backupLimit ?? null),
+    updatedAt: new Date() as Date,
+  }
+
+  if (existingLimits) {
     db.update(tables.serverLimits)
       .set(updateData)
       .where(eq(tables.serverLimits.serverId, serverId))
       .run()
+    
+    const [updated] = db.select()
+      .from(tables.serverLimits)
+      .where(eq(tables.serverLimits.serverId, serverId))
+      .limit(1)
+      .all()
+  } else {
+    const now = new Date()
+    db.insert(tables.serverLimits)
+      .values({
+        serverId,
+        cpu: cpu ?? 0,
+        memory: memory ?? 0,
+        swap: swap ?? 0,
+        disk: disk ?? 0,
+        io: io ?? 500,
+        threads: threads ?? null,
+        databaseLimit: databaseLimit ?? null,
+        allocationLimit: allocationLimit ?? null,
+        backupLimit: backupLimit ?? null,
+        memoryOverallocate: null,
+        diskOverallocate: null,
+        oomDisabled: server.oomDisabled ?? true,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .run()
+    
+    const [inserted] = db.select()
+      .from(tables.serverLimits)
+      .where(eq(tables.serverLimits.serverId, serverId))
+      .limit(1)
+      .all()
   }
 
   if (oomDisabled !== undefined) {
@@ -60,6 +102,24 @@ export default defineEventHandler(async (event) => {
       .set({ oomDisabled: Boolean(oomDisabled) })
       .where(eq(tables.servers.id, serverId))
       .run()
+  }
+
+  const { getWingsClientForServer } = await import('~~/server/utils/wings-client')
+  const result = await getWingsClientForServer(server.uuid)
+  const { client } = result
+  
+  try {
+    await client.syncServer(server.uuid)
+  } catch (syncError) {
+    throw createError({
+      statusCode: 500,
+      message: `Database updated successfully, but failed to sync with Wings: ${syncError instanceof Error ? syncError.message : String(syncError)}. The changes will be applied on next server restart.`,
+      data: {
+        databaseUpdated: true,
+        wingsSyncFailed: true,
+        error: syncError instanceof Error ? syncError.message : String(syncError),
+      },
+    })
   }
 
   return {

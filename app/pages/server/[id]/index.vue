@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import { computed, watchEffect } from 'vue'
-import { createError } from 'h3'
+import { computed, watch } from 'vue'
 
 definePageMeta({
   auth: true,
@@ -11,9 +10,8 @@ const route = useRoute()
 const router = useRouter()
 const serverId = computed(() => route.params.id as string)
 
-const { data: serverResponse, pending, error } = await useAsyncData(
-  `server:${serverId.value}`,
-  () => $fetch<{ data: PanelServerDetails }>(`/api/servers/${serverId.value}`),
+const { data: serverResponse, pending, error } = await useFetch<{ data: PanelServerDetails }>(
+  `/api/servers/${serverId.value}`,
   {
     watch: [serverId],
     immediate: true,
@@ -49,22 +47,22 @@ function formatDate(value: string | null | undefined) {
   return Number.isNaN(date.getTime()) ? 'Unknown' : date.toLocaleString()
 }
 
-watchEffect(() => {
-  if (pending.value || error.value)
-    return
-
-  if (!server.value) {
-    throw createError({ statusCode: 404, statusMessage: 'Server not found' })
+watch(error, (err) => {
+  if (err && err.statusCode === 404 && import.meta.client) {
+    router.replace('/server')
   }
 })
 
-watchEffect(() => {
-  if (!import.meta.client)
+watch([pending, error, server], ([isPending, err, serverData]) => {
+  if (!import.meta.client) {
     return
-
-  if (!pending.value && server.value) {
-    router.replace(`/server/${serverId.value}/console`)
   }
+
+  if (isPending || err || !serverData) {
+    return
+  }
+
+  router.replace(`/server/${serverId.value}/console`)
 })
 
 const infoStats = computed(() => {

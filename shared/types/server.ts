@@ -64,6 +64,46 @@ export interface ServerResponse {
   data: Server
 }
 
+export interface AdminServerDetails extends Server {
+  owner?: {
+    id: string
+    username: string
+    email: string
+  } | null
+  node?: {
+    id: string
+    uuid: string
+    name: string
+    fqdn: string
+  } | null
+  egg?: {
+    id: string
+    uuid: string
+    name: string
+  } | null
+  nest?: {
+    id: string
+    uuid: string
+    name: string
+  } | null
+  allocation?: {
+    id: string
+    ip: string
+    port: number
+  } | null
+  allocations?: Array<{
+    id: string
+    ip: string
+    port: number
+    is_primary: boolean
+  }>
+  limits?: ServerLimits | null
+}
+
+export interface AdminServerResponse {
+  data: AdminServerDetails
+}
+
 export interface ServerLimitsResponse {
   data: ServerLimits
 }
@@ -305,6 +345,7 @@ export interface ServerStatsChartProps {
 export interface ServerTerminalProps {
   logs: string[]
   connected: boolean
+  serverId?: string
 }
 
 
@@ -713,6 +754,8 @@ export interface ServerProvisioningConfig {
   additionalAllocationIds?: string[]
   mountIds?: string[]
   dockerImageOverride?: string
+  skipScripts?: boolean
+  startOnCompletion?: boolean
   dockerCredentials?: {
     registry?: string
     username?: string
@@ -893,6 +936,7 @@ export interface PanelServerDetails {
     id: string | null
     username: string | null
   }
+  permissions?: string[] 
 }
 
 

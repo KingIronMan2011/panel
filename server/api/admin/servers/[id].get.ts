@@ -2,19 +2,26 @@ import { getServerSession, isAdmin  } from '~~/server/utils/session'
 import { useDrizzle, tables, eq } from '~~/server/utils/drizzle'
 
 export default defineEventHandler(async (event) => {
+  
   const session = await getServerSession(event)
 
   if (!isAdmin(session)) {
     throw createError({ statusCode: 403, message: 'Forbidden' })
   }
 
-  const serverId = getRouterParam(event, 'id')
+  const identifier = getRouterParam(event, 'id')
 
-  if (!serverId) {
+  if (!identifier) {
     throw createError({ statusCode: 400, message: 'Server ID required' })
   }
 
   const db = useDrizzle()
+  const { findServerByIdentifier } = await import('~~/server/utils/serversStore')
+  const foundServer = await findServerByIdentifier(identifier)
+
+  if (!foundServer) {
+    throw createError({ statusCode: 404, message: 'Server not found' })
+  }
 
   const result = db
     .select({
@@ -31,7 +38,7 @@ export default defineEventHandler(async (event) => {
     .leftJoin(tables.eggs, eq(tables.servers.eggId, tables.eggs.id))
     .leftJoin(tables.nests, eq(tables.servers.nestId, tables.nests.id))
     .leftJoin(tables.serverAllocations, eq(tables.servers.allocationId, tables.serverAllocations.id))
-    .where(eq(tables.servers.id, serverId))
+    .where(eq(tables.servers.id, foundServer.id))
     .get()
 
   if (!result) {
@@ -57,13 +64,25 @@ export default defineEventHandler(async (event) => {
       id: server.id,
       uuid: server.uuid,
       identifier: server.identifier,
-      external_id: server.externalId,
+      externalId: server.externalId,
       name: server.name,
       description: server.description,
       status: server.status,
       suspended: server.suspended,
+      skipScripts: server.skipScripts ?? false,
+      ownerId: server.ownerId,
+      nodeId: server.nodeId,
+      allocationId: server.allocationId,
+      nestId: server.nestId,
+      eggId: server.eggId,
       startup: server.startup,
-      docker_image: server.dockerImage || server.image,
+      image: server.dockerImage || server.image,
+      allocationLimit: limits?.allocationLimit ?? null,
+      databaseLimit: limits?.databaseLimit ?? null,
+      backupLimit: limits?.backupLimit ?? 0,
+      installedAt: server.installedAt,
+      createdAt: server.createdAt,
+      updatedAt: server.updatedAt,
       owner: owner ? {
         id: owner.id,
         username: owner.username,
@@ -102,9 +121,9 @@ export default defineEventHandler(async (event) => {
         disk: limits.disk,
         swap: limits.swap,
         io: limits.io,
+        threads: limits.threads,
+        oomDisabled: limits.oomDisabled,
       } : null,
-      created_at: server.createdAt,
-      updated_at: server.updatedAt,
     },
   }
 })

@@ -57,7 +57,14 @@ function createAuth() {
   
   const isProduction = process.env.NODE_ENV === 'production'
   
-  const baseURL = runtimeConfig.authOrigin || undefined
+  const baseURL = runtimeConfig.authOrigin 
+    || process.env.BETTER_AUTH_URL
+    || process.env.AUTH_ORIGIN
+    || process.env.NUXT_AUTH_ORIGIN
+    || process.env.NUXT_PUBLIC_APP_URL
+    || process.env.APP_URL
+    || undefined
+  
   const secret = runtimeConfig.authSecret || undefined
   
   if (isProduction) {
@@ -69,14 +76,30 @@ function createAuth() {
     }
   }
   
-  const trustedOrigins: string[] = baseURL ? [baseURL] : []
+  const trustedOrigins: string[] = []
+  
+  if (baseURL) {
+    trustedOrigins.push(baseURL)
+  }
+  
+  if (!isProduction || process.env.NODE_ENV !== 'production') {
+    if (!trustedOrigins.includes('http://localhost:3000')) {
+      trustedOrigins.push('http://localhost:3000')
+    }
+  }
   
   if (process.env.BETTER_AUTH_TRUSTED_ORIGINS) {
     const additionalOrigins = process.env.BETTER_AUTH_TRUSTED_ORIGINS
       .split(',')
       .map(origin => origin.trim())
       .filter(Boolean)
+      .filter(origin => !trustedOrigins.includes(origin)) // Avoid duplicates
     trustedOrigins.push(...additionalOrigins)
+  }
+  
+  const appUrl = process.env.NUXT_PUBLIC_APP_URL || process.env.APP_URL
+  if (appUrl && appUrl !== baseURL && !trustedOrigins.includes(appUrl)) {
+    trustedOrigins.push(appUrl)
   }
   
   const ipAddressHeaders = process.env.BETTER_AUTH_IP_HEADER
@@ -357,6 +380,7 @@ function createAuth() {
       apiKey({
         enableSessionForAPIKeys: false,
         apiKeyHeaders: ['x-api-key', 'authorization'],
+        enableMetadata: true,
       }),
       bearer(),
       customSession(async ({ user, session }) => {

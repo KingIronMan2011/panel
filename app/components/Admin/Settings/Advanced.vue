@@ -87,7 +87,7 @@ async function handleSubmit(event: FormSubmitEvent<FormSchema>) {
 
   try {
     await $fetch('/api/admin/settings/advanced', {
-      method: 'PATCH',
+      method: 'patch',
       body: payload,
     })
 

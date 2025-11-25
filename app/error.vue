@@ -12,13 +12,20 @@ const headline = computed(() => {
 
 const description = computed(() => {
   if (props.error.statusCode === 404) {
-    return 'We asked Wings for this resource but the daemon could not map it to any known route.'
+    const url = requestURL.href
+    if (url.includes('/api/')) {
+      return 'The requested API endpoint was not found. Check the endpoint URL and ensure the server is properly configured.'
+    }
+    if (url.includes('/server/')) {
+      return 'The requested server page was not found. The server may not exist or you may not have permission to access it.'
+    }
+    return 'The requested page was not found.'
   }
   if (props.error.statusCode === 401) {
-    return 'Authentication is required. Ensure your panel token is valid before retrying.'
+    return 'Authentication is required. Please sign in to access this resource.'
   }
   if (props.error.statusCode === 500) {
-    return 'Wings returned a server error. Check node logs and retry the operation.'
+    return 'An internal server error occurred. Check server logs for more details.'
   }
   return props.error.statusMessage || 'No additional error context was provided.'
 })

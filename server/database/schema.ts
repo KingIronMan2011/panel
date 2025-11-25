@@ -221,11 +221,12 @@ export const servers = sqliteTable(
 )
 
 export const serverLimits = sqliteTable('server_limits', {
-  serverId: text('server_id').notNull().references(() => servers.id, { onDelete: 'cascade' }),
+  serverId: text('server_id').primaryKey().notNull().references(() => servers.id, { onDelete: 'cascade' }),
   memory: integer('memory'),
   memoryOverallocate: integer('memory_overallocate'),
   disk: integer('disk'),
   diskOverallocate: integer('disk_overallocate'),
+  swap: integer('swap'),
   io: integer('io'),
   cpu: integer('cpu'),
   threads: text('threads'),
@@ -525,13 +526,32 @@ export type SettingRow = typeof settings.$inferSelect
 export const apiKeys = sqliteTable('api_keys', {
   id: text('id').primaryKey(),
   userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  
+  name: text('name'),
+  start: text('start'),
+  prefix: text('prefix'),
+  key: text('key').notNull(),
+  
   keyType: integer('key_type').notNull().default(1),
-  identifier: text('identifier', { length: 16 }).notNull().unique(),
-  token: text('token').notNull(),
+  identifier: text('identifier', { length: 16 }).unique(),
+  token: text('token'),
   allowedIps: text('allowed_ips'),
   memo: text('memo'),
   lastUsedAt: integer('last_used_at', { mode: 'timestamp' }),
   expiresAt: integer('expires_at', { mode: 'timestamp' }),
+
+  refillInterval: integer('refill_interval'),
+  refillAmount: integer('refill_amount'),
+  lastRefillAt: integer('last_refill_at', { mode: 'timestamp' }),
+  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+  rateLimitEnabled: integer('rate_limit_enabled', { mode: 'boolean' }).notNull().default(true),
+  rateLimitTimeWindow: integer('rate_limit_time_window'),
+  rateLimitMax: integer('rate_limit_max'),
+  requestCount: integer('request_count').notNull().default(0),
+  remaining: integer('remaining'),
+  lastRequest: integer('last_request', { mode: 'timestamp' }),
+  metadata: text('metadata'),
+  permissions: text('permissions'),
 
   rServers: integer('r_servers').notNull().default(0),
   rNodes: integer('r_nodes').notNull().default(0),
@@ -546,6 +566,7 @@ export const apiKeys = sqliteTable('api_keys', {
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 }, (table) => ({
   userIdIndex: index('api_keys_user_id_index').on(table.userId),
+  keyIndex: index('api_keys_key_index').on(table.key),
 }))
 
 export type ApiKeyRow = typeof apiKeys.$inferSelect

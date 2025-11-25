@@ -1,4 +1,4 @@
-import { createError } from 'h3'
+import { createError, getRouterParam, setResponseHeader } from 'h3'
 import { resolveServerRequest } from '~~/server/utils/http/serverAccess'
 import { generateWingsJWT } from '~~/server/utils/wings/jwt'
 
@@ -8,7 +8,17 @@ interface WebSocketToken {
 }
 
 export default defineEventHandler(async (event): Promise<WebSocketToken> => {
+  const id = getRouterParam(event, 'id')
+  if (!id || typeof id !== 'string') {
+    throw createError({
+      statusCode: 400,
+      statusMessage: 'Bad Request',
+      message: 'Missing server identifier',
+    })
+  }
+
   const context = await resolveServerRequest(event, {
+    identifier: id,
     requiredPermissions: ['websocket.connect'],
   })
 
@@ -22,10 +32,12 @@ export default defineEventHandler(async (event): Promise<WebSocketToken> => {
 
   const { node, nodeConnection, user, server, permissions } = context
 
+  const baseUrl = `${node.scheme}://${node.fqdn}:${node.daemonListen}`
+  
   const token = await generateWingsJWT(
     {
       tokenSecret: nodeConnection.tokenSecret,
-      baseUrl: node.baseURL,
+      baseUrl,
     },
     {
       server: { uuid: server.uuid },
@@ -39,8 +51,12 @@ export default defineEventHandler(async (event): Promise<WebSocketToken> => {
   const protocol = node.scheme === 'https' ? 'wss' : 'ws'
   const socketUrl = `${protocol}://${node.fqdn}:${node.daemonListen}/api/servers/${server.uuid}/ws`
 
-  return {
+  const response: WebSocketToken = {
     token,
     socket: socketUrl,
   }
+  
+  setResponseHeader(event, 'Content-Type', 'application/json')
+  
+  return response
 })

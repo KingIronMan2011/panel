@@ -46,7 +46,7 @@ async function renameServer() {
   renaming.value = true
   try {
     await $fetch(`/api/servers/${serverId.value}/rename`, {
-      method: 'PATCH',
+      method: 'patch',
       body: { name: newName.value.trim() },
     })
 
@@ -101,8 +101,9 @@ async function reinstallServer() {
   }
 }
 
-function formatBytes(bytes: number | null): string {
-  if (bytes === null || bytes === 0) return 'Unlimited'
+function formatBytes(bytes: number | null | undefined): string {
+  if (bytes === null || bytes === undefined || bytes === 0 || bytes === -1) return 'Unlimited'
+  if (bytes < 0) return 'Unlimited'
   const k = 1024
   const sizes = ['MB', 'GB', 'TB']
   const i = Math.floor(Math.log(bytes) / Math.log(k))
@@ -278,12 +279,12 @@ function formatIo(io: number | null): string {
       </UContainer>
     </UPageBody>
 
-    <UModal v-model="showReinstallModal">
-      <UCard>
-        <template #header>
-          <h3 class="text-lg font-semibold">Confirm Server Reinstallation</h3>
-        </template>
-
+    <UModal
+      v-model:open="showReinstallModal"
+      title="Confirm Server Reinstallation"
+      :ui="{ footer: 'justify-end' }"
+    >
+      <template #body>
         <div class="space-y-4">
           <UAlert color="error" icon="i-lucide-alert-triangle">
             <template #title>This is a destructive action!</template>
@@ -296,74 +297,69 @@ function formatIo(io: number | null): string {
           <p class="text-sm text-muted-foreground">
             Are you sure you want to reinstall <strong>{{ server?.name }}</strong>?
           </p>
-
-          <div class="flex justify-end gap-2">
-            <UButton
-              variant="ghost"
-              :disabled="reinstalling"
-              @click="showReinstallModal = false"
-            >
-              Cancel
-            </UButton>
-            <UButton
-              icon="i-lucide-refresh-cw"
-              color="error"
-              :loading="reinstalling"
-              :disabled="reinstalling"
-              @click="reinstallServer"
-            >
-              Yes, Reinstall Server
-            </UButton>
-          </div>
         </div>
-      </UCard>
+      </template>
+
+      <template #footer>
+        <UButton
+          variant="ghost"
+          :disabled="reinstalling"
+          @click="showReinstallModal = false"
+        >
+          Cancel
+        </UButton>
+        <UButton
+          icon="i-lucide-refresh-cw"
+          color="error"
+          :loading="reinstalling"
+          :disabled="reinstalling"
+          @click="reinstallServer"
+        >
+          Yes, Reinstall Server
+        </UButton>
+      </template>
     </UModal>
 
-    <UModal v-model="showRenameModal">
-      <UCard>
-        <template #header>
-          <h3 class="text-lg font-semibold">Rename Server</h3>
-        </template>
+    <UModal
+      v-model:open="showRenameModal"
+      title="Rename Server"
+      :ui="{ footer: 'justify-end' }"
+    >
+      <template #body>
+        <UFormField label="Server Name" name="name" required>
+          <UInput
+            v-model="newName"
+            icon="i-lucide-server"
+            placeholder="My Awesome Server"
+            required
+            class="w-full"
+            :disabled="renaming"
+            @keydown.enter="renameServer"
+          />
+          <template #help>
+            Choose a descriptive name for your server
+          </template>
+        </UFormField>
+      </template>
 
-        <form class="space-y-4" @submit.prevent="renameServer">
-          <UFormField label="Server Name" name="name" required>
-            <UInput
-              v-model="newName"
-              icon="i-lucide-server"
-              placeholder="My Awesome Server"
-              required
-              class="w-full"
-              :disabled="renaming"
-            />
-            <template #help>
-              Choose a descriptive name for your server
-            </template>
-          </UFormField>
-
-          <div class="flex justify-end gap-2">
-            <UButton
-              variant="ghost"
-              :disabled="renaming"
-              @click="showRenameModal = false"
-            >
-              Cancel
-            </UButton>
-            <UButton
-              type="submit"
-              icon="i-lucide-check"
-              color="primary"
-              :loading="renaming"
-              :disabled="renaming || !newName.trim()"
-            >
-              Save Name
-            </UButton>
-          </div>
-        </form>
-      </UCard>
+      <template #footer>
+        <UButton
+          variant="ghost"
+          :disabled="renaming"
+          @click="showRenameModal = false"
+        >
+          Cancel
+        </UButton>
+        <UButton
+          icon="i-lucide-check"
+          color="primary"
+          :loading="renaming"
+          :disabled="renaming || !newName.trim()"
+          @click="renameServer"
+        >
+          Save Name
+        </UButton>
+      </template>
     </UModal>
-
-    <template #right>
-      <UPageAside />
-    </template>
   </UPage>
 </template>
