@@ -3,12 +3,13 @@ import { z } from 'zod'
 export const createUserSchema = z.object({
   username: z.string().min(1).max(255).optional(),
   email: z.string().email().min(1).max(255),
-  password: z.string().min(12).max(255).optional(),
+  password: z.string().min(8).max(255).optional(),
+  name: z.string().min(1).max(255).optional(),
   nameFirst: z.string().max(255).optional(),
   nameLast: z.string().max(255).optional(),
   language: z.string().max(10).optional(),
   rootAdmin: z.union([z.boolean(), z.string()]).optional(),
-  role: z.enum(['admin', 'user']).optional(),
+  role: z.enum(['admin', 'user']).default('user'),
 })
 
 export const updateUserSchema = z.object({
