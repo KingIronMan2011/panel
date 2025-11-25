@@ -286,7 +286,7 @@ function createAuth() {
     },
     advanced: {
       disableCSRFCheck: false,
-      disableOriginCheck: false,
+      disableOriginCheck: !isProduction,
       useSecureCookies: isProduction,
       ipAddress: {
         ipAddressHeaders,
