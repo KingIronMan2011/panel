@@ -172,9 +172,11 @@ export default defineNuxtConfig({
       ],
     },
   },
-  site: { indexable: false },
+  site: { 
+    indexable: false, 
+  },
   robots: {
-    blockAiBots: true, // TODO: configure nuxt-robots 
+    blockAiBots: true, // Block AI bots from crawling !
   },
   routeRules: {
     '/api/**': { ssr: false },
