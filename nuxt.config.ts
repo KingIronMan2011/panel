@@ -63,8 +63,24 @@ export default defineNuxtConfig({
     '@pinia/colada-nuxt',
     'nuxt-monaco-editor',
     '@nuxtjs/turnstile',
-    '@nuxt/scripts'
+    '@nuxt/scripts',
+    '@nuxtjs/i18n',
   ],
+
+  i18n: {
+    strategy: 'no_prefix',
+    defaultLocale: 'en',
+    locales: [
+      { code: 'en', name: 'English', file: 'en.json' },
+    ],
+    restructureDir: '.',
+    langDir: 'locales',
+    detectBrowserLanguage: {
+      useCookie: true,
+      cookieKey: 'i18n_redirected',
+      redirectOn: 'root',
+    },
+  },
 
   monacoEditor: {
     optimizeMonacoDeps: false,

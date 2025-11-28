@@ -108,6 +108,7 @@ async function onSubmit(payload: FormSubmitEvent<PasswordRequestBody>) {
     :fields="fields"
     title="Reset your password"
     description="Enter the email address or username associated with your account."
+    icon="i-lucide-key-round"
     :submit="submitProps"
     @submit="onSubmit as any"
   >
