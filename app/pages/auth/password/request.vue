@@ -10,6 +10,12 @@ definePageMeta({
 
 const toast = useToast()
 const router = useRouter()
+const runtimeConfig = useRuntimeConfig()
+
+const turnstileSiteKey = computed(() => runtimeConfig.public.turnstile?.siteKey || '')
+const hasTurnstile = computed(() => !!turnstileSiteKey.value && turnstileSiteKey.value.length > 0)
+const turnstileToken = ref<string | undefined>(undefined)
+const turnstileRef = ref<{ reset: () => void } | null>(null)
 
 const fields: AuthFormField[] = [
   {
@@ -39,12 +45,38 @@ const submitProps = computed(() => ({
 async function onSubmit(payload: FormSubmitEvent<PasswordRequestBody>) {
   loading.value = true
   try {
+    if (hasTurnstile.value && !turnstileToken.value) {
+      toast.add({
+        color: 'error',
+        title: 'Verification required',
+        description: 'Please complete the security verification.',
+      })
+      return
+    }
+
     const identity = String(payload.data.identity).trim()
     const body: PasswordRequestBody = { identity }
-    await $fetch<{ success: boolean }>('/api/auth/password/request', {
+    
+    const fetchOptions: { headers?: Record<string, string> } = {}
+    if (hasTurnstile.value && turnstileToken.value) {
+      fetchOptions.headers = { 'x-captcha-response': turnstileToken.value }
+    }
+
+    const response = await fetch('/api/auth/password/request', {
       method: 'POST',
-      body,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(fetchOptions.headers || {}),
+      },
+      body: JSON.stringify(body),
     })
+    
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: 'Request failed' }))
+      throw new Error(error.message || 'Request failed')
+    }
+    
+    await response.json() as { success: boolean }
 
     toast.add({
       title: 'Check your inbox',
@@ -61,6 +93,8 @@ async function onSubmit(payload: FormSubmitEvent<PasswordRequestBody>) {
       description: message,
       color: 'error',
     })
+    turnstileRef.value?.reset()
+    turnstileToken.value = undefined
   }
   finally {
     loading.value = false
@@ -74,14 +108,26 @@ async function onSubmit(payload: FormSubmitEvent<PasswordRequestBody>) {
     :fields="fields"
     title="Reset your password"
     description="Enter the email address or username associated with your account."
-    icon="i-lucide-key-round"
     :submit="submitProps"
     @submit="onSubmit as any"
   >
     <template #footer>
-      <NuxtLink to="/auth/login" class="text-primary font-medium">
-        Back to sign in
-      </NuxtLink>
+      <div class="space-y-4">
+        <div v-if="hasTurnstile" class="flex flex-col items-center gap-2">
+          <NuxtTurnstile
+            ref="turnstileRef"
+            :model-value="turnstileToken"
+            :options="{
+              theme: 'dark',
+              size: 'normal',
+            }"
+            @update:model-value="(value: string | undefined) => { turnstileToken = value }"
+          />
+        </div>
+        <NuxtLink to="/auth/login" class="text-primary font-medium block text-center">
+          Back to sign in
+        </NuxtLink>
+      </div>
     </template>
   </UAuthForm>
 </template>

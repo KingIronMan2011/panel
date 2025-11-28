@@ -12,12 +12,17 @@ const appName = computed(() => runtimeConfig.public.appName || 'XyraPanel')
 const route = useRoute()
 const toast = useToast()
 
+const turnstileSiteKey = computed(() => runtimeConfig.public.turnstile?.siteKey || '')
+const hasTurnstile = computed(() => !!turnstileSiteKey.value && turnstileSiteKey.value.length > 0)
+
 definePageMeta({
   layout: 'auth',
   auth: false,
 })
 
 const requiresToken = ref(false)
+const turnstileToken = ref<string | undefined>(undefined)
+const turnstileRef = ref<{ reset: () => void } | null>(null)
 
 const baseFields: AuthFormField[] = [
   {
@@ -91,7 +96,21 @@ async function onSubmit(payload: FormSubmitEvent<Schema>) {
       throw new Error('Two-factor authentication token required.')
     }
 
-    const result = await authStore.login(identity, password, token)
+    if (hasTurnstile.value && !turnstileToken.value) {
+      toast.add({
+        color: 'error',
+        title: 'Verification required',
+        description: 'Please complete the security verification.',
+      })
+      return
+    }
+
+    const result = await authStore.login(identity, password, token, turnstileToken.value || undefined)
+    
+    if (result?.error) {
+      turnstileRef.value?.reset()
+      turnstileToken.value = undefined
+    }
 
     if (result?.error) {
       const errorMessage = result.error.toLowerCase()
@@ -153,6 +172,8 @@ async function onSubmit(payload: FormSubmitEvent<Schema>) {
       title: 'Sign in failed',
       description: message,
     })
+    turnstileRef.value?.reset()
+    turnstileToken.value = undefined
   }
   finally {
     loading.value = false
@@ -174,5 +195,15 @@ async function onSubmit(payload: FormSubmitEvent<Schema>) {
         </NuxtLink>
       </template>
     </UAuthForm>
+    <div v-if="hasTurnstile" class="flex flex-col items-center gap-2 mt-4">
+      <NuxtTurnstile
+        ref="turnstileRef"
+        v-model="turnstileToken"
+        :options="{
+          theme: 'dark',
+          size: 'normal',
+        }"
+      />
+    </div>
   </div>
 </template>

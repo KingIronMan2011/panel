@@ -1,6 +1,6 @@
 import { betterAuth } from 'better-auth/minimal'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
-import { username, twoFactor, customSession, apiKey, bearer, haveIBeenPwned, admin, multiSession } from 'better-auth/plugins'
+import { username, twoFactor, customSession, apiKey, bearer, haveIBeenPwned, admin, multiSession, captcha } from 'better-auth/plugins'
 import { createAuthMiddleware } from 'better-auth/api'
 import type { AuthContext } from '@better-auth/core'
 import { useDrizzle, tables, eq } from '~~/server/utils/drizzle'
@@ -461,6 +461,10 @@ function createAuth() {
       }),
     },
     plugins: [
+      ...(runtimeConfig.turnstile.secretKey ? [captcha({
+        provider: 'cloudflare-turnstile',
+        secretKey: runtimeConfig.turnstile.secretKey,
+      })] : []),
       username({
         minUsernameLength: 3,
         maxUsernameLength: 30,

@@ -62,6 +62,8 @@ export default defineNuxtConfig({
     '@pinia/nuxt',
     '@pinia/colada-nuxt',
     'nuxt-monaco-editor',
+    '@nuxtjs/turnstile',
+    '@nuxt/scripts'
   ],
 
   monacoEditor: {
@@ -69,14 +71,24 @@ export default defineNuxtConfig({
     removeSourceMaps: true,
   },
 
+  turnstile: {
+    siteKey: process.env.NUXT_PUBLIC_TURNSTILE_SITE_KEY || '',
+  },
+
   runtimeConfig: {
     authOrigin,
     authSecret: process.env.BETTER_AUTH_SECRET || process.env.AUTH_SECRET || process.env.NUXT_AUTH_SECRET,
     redis: redisStorageConfig,
+    turnstile: {
+      secretKey: process.env.NUXT_TURNSTILE_SECRET_KEY || '',
+    },
     debug: process.env.DEBUG === 'true' || process.env.NUXT_DEBUG === 'true' || isDev,
     public: {
       appName: process.env.NUXT_APP_NAME,
       debug: process.env.DEBUG === 'true' || process.env.NUXT_DEBUG === 'true' || isDev,
+      turnstile: {
+        siteKey: process.env.NUXT_PUBLIC_TURNSTILE_SITE_KEY || '',
+      },
     },
   },
 

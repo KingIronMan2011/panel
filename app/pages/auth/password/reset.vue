@@ -109,7 +109,6 @@ async function onSubmit(payload: FormSubmitEvent<PasswordResetInput>) {
     :fields="fields"
     title="Set a new password"
     description="Enter your reset token and choose a new password."
-    icon="i-lucide-key-round"
     :submit="submitProps"
     @submit="onSubmit as any"
   >

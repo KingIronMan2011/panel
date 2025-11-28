@@ -104,21 +104,29 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  async function login(identity: string, password: string, token?: string) {
+  async function login(identity: string, password: string, token?: string, captchaToken?: string) {
     error.value = null
     try {
       const isEmail = identity.includes('@')
+      
+      const fetchOptions = captchaToken ? {
+        headers: {
+          'x-captcha-response': captchaToken,
+        },
+      } : undefined
       
       if (isEmail) {
         const emailResult = await authClient.signIn.email({
           email: identity,
           password,
+          fetchOptions,
         })
 
         if (emailResult.error) {
           const usernameResult = await authClient.signIn.username({
             username: identity,
             password,
+            fetchOptions,
           })
 
           if (usernameResult.error) {
@@ -158,6 +166,7 @@ export const useAuthStore = defineStore('auth', () => {
         const usernameResult = await authClient.signIn.username({
           username: identity,
           password,
+          fetchOptions,
         })
 
         if (usernameResult.error) {

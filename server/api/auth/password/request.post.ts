@@ -1,4 +1,4 @@
-import { createError } from 'h3'
+import { createError, getHeader } from 'h3'
 import { APIError } from 'better-auth/api'
 import { getAuth, normalizeHeadersForAuth } from '~~/server/utils/auth'
 import { useDrizzle, tables, eq, or } from '~~/server/utils/drizzle'
@@ -37,13 +37,19 @@ export default defineEventHandler(async (event) => {
   const auth = getAuth()
   const resetBaseUrl = `${resolvePanelBaseUrl()}/auth/password/reset`
   
+  const captchaToken = getHeader(event, 'x-captcha-response')
+  const authHeaders = normalizeHeadersForAuth(event.node.req.headers)
+  if (captchaToken) {
+    authHeaders['x-captcha-response'] = captchaToken
+  }
+  
   try {
     await auth.api.requestPasswordReset({
       body: {
         email: user.email,
         redirectTo: resetBaseUrl,
       },
-      headers: normalizeHeadersForAuth(event.node.req.headers),
+      headers: authHeaders,
     })
   }
   catch (error) {
