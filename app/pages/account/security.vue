@@ -327,6 +327,7 @@ async function clearCompromisedFlag() {
               v-if="isMounted && passwordCompromised"
               icon="i-lucide-shield-alert"
               color="warning"
+              variant="subtle"
               title="Password Marked as Compromised"
               description="Your password was previously marked as compromised. If you've already changed to a secure password, you can clear this flag manually."
               class="mb-4"

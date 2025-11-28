@@ -2,18 +2,20 @@
 import { z } from 'zod'
 import type { FormSubmitEvent } from '@nuxt/ui'
 import type { GeneralSettings } from '#shared/types/admin'
+import * as uiLocales from '@nuxt/ui/locale'
 
 const toast = useToast()
 const isSubmitting = ref(false)
 
-const localeEnumValues = ['en', 'de', 'fr', 'es'] as const
-type LocaleValue = (typeof localeEnumValues)[number]
-const localeOptions = [
-  { label: 'English', value: localeEnumValues[0] },
-  { label: 'German', value: localeEnumValues[1] },
-  { label: 'French', value: localeEnumValues[2] },
-  { label: 'Spanish', value: localeEnumValues[3] },
-] satisfies { label: string; value: LocaleValue }[]
+const availableLocales = computed(() => {
+  try {
+    return Object.values(uiLocales) || []
+  }
+  catch {
+    return []
+  }
+})
+type LocaleValue = string
 
 const timezoneEnumValues = [
   'UTC',
@@ -33,10 +35,10 @@ const timezoneOptions = [
   { label: 'Asia/Tokyo', value: timezoneEnumValues[5] },
 ] satisfies { label: string; value: TimezoneValue }[]
 
-const schema = z.object({
+const baseSchema = z.object({
   name: z.string().trim().min(2, 'Panel name must be at least 2 characters'),
   url: z.string().trim().pipe(z.url('Enter a valid URL')),
-  locale: z.enum(localeEnumValues, { message: 'Select a default language' }),
+  locale: z.string(),
   timezone: z.enum(timezoneEnumValues, { message: 'Select a timezone' }),
   brandText: z.string().trim().max(80, 'Brand text must be 80 characters or less'),
   showBrandText: z.boolean(),
@@ -51,7 +53,18 @@ const schema = z.object({
   ),
 })
 
-type FormSchema = z.infer<typeof schema>
+const schema = computed(() => {
+  return baseSchema.extend({
+    locale: z.string().refine(
+      (val) => availableLocales.value.some(locale => locale.code === val),
+      { message: 'Select a valid language' }
+    ),
+  })
+})
+
+type FormSchema = z.infer<typeof baseSchema> & {
+  locale: string
+}
 
 const { data: settings, refresh } = await useAsyncData(
   'admin-settings-general',
@@ -65,7 +78,8 @@ const { data: settings, refresh } = await useAsyncData(
 )
 
 function resolveLocale(value: string | null | undefined): LocaleValue {
-  return (localeEnumValues.includes(value as LocaleValue) ? value : localeEnumValues[0]) as LocaleValue
+  const defaultLocale = availableLocales.value.find(locale => locale.code === 'en')?.code || availableLocales.value[0]?.code || 'en'
+  return (availableLocales.value.some(locale => locale.code === value) ? value : defaultLocale) as LocaleValue
 }
 
 function resolveTimezone(value: string | null | undefined): TimezoneValue {
@@ -135,12 +149,13 @@ watch(logoFile, async (file) => {
 
 async function removeLogo() {
   try {
-    await $fetch('/api/admin/settings/general', {
+    const body: Partial<GeneralSettings> = {
+      brandLogoUrl: null,
+      showBrandLogo: false,
+    }
+    await $fetch<GeneralSettings>('/api/admin/settings/general', {
       method: 'patch',
-      body: {
-        brandLogoUrl: null,
-        showBrandLogo: false,
-      },
+      body,
     })
 
     form.brandLogoUrl = null
@@ -230,7 +245,12 @@ async function handleSubmit(event: FormSubmitEvent<FormSchema>) {
       </UFormField>
 
       <UFormField label="Language" name="locale" required>
-        <USelect v-model="form.locale" :items="localeOptions" value-key="value" :disabled="isSubmitting" />
+        <ULocaleSelect
+          v-model="form.locale"
+          :locales="availableLocales"
+          :disabled="isSubmitting"
+          class="w-full"
+        />
       </UFormField>
 
       <UFormField label="Timezone" name="timezone" required>

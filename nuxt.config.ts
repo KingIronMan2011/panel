@@ -68,18 +68,31 @@ export default defineNuxtConfig({
   ],
 
   i18n: {
-    strategy: 'no_prefix',
+    strategy: 'prefix_except_default',
     defaultLocale: 'en',
     locales: [
-      { code: 'en', name: 'English', file: 'en.json' },
+      { code: 'en', name: 'English', language: 'en', dir: 'ltr', file: 'en.json' },
+      { code: 'es', name: 'Español', language: 'es', dir: 'ltr', file: 'es.json' },
     ],
-    restructureDir: '.',
+    restructureDir: 'i18n',
     langDir: 'locales',
     detectBrowserLanguage: {
       useCookie: true,
       cookieKey: 'i18n_redirected',
       redirectOn: 'root',
+      fallbackLocale: 'en',
     },
+    compilation: {
+      strictMessage: true,
+      escapeHtml: false,
+    },
+    bundle: {
+      compositionOnly: true,
+      runtimeOnly: false,
+      fullInstall: true,
+      dropMessageCompiler: false,
+    },
+    debug: isDev,
   },
 
   monacoEditor: {
@@ -104,6 +117,9 @@ export default defineNuxtConfig({
       debug: process.env.DEBUG === 'true' || process.env.NUXT_DEBUG === 'true' || isDev,
       turnstile: {
         siteKey: process.env.NUXT_PUBLIC_TURNSTILE_SITE_KEY || '',
+      },
+      i18n: {
+        baseUrl: process.env.NUXT_PUBLIC_I18N_BASE_URL || appOrigin || authOrigin || 'http://localhost:3000',
       },
     },
   },

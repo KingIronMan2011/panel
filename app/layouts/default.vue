@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import type { NavigationMenuItem } from '@nuxt/ui'
 import { authClient } from '~/utils/auth-client'
+import * as locales from '@nuxt/ui/locale'
 
 const { data: session } = await authClient.useSession(useFetch)
 
@@ -91,6 +92,29 @@ const isAdminUser = computed(() => {
   if (user.value?.role === 'admin') return true
   return false
 })
+
+const { locale, setLocale, locales: i18nLocales } = useI18n()
+
+const uiLocales = computed(() => {
+  try {
+    return Object.values(locales) || []
+  }
+  catch {
+    return []
+  }
+})
+
+function handleLocaleChange(newLocale: string | undefined) {
+  if (!newLocale) return
+  if (newLocale === 'en' || newLocale === 'es') {
+    const validLocales = i18nLocales.value.map(loc => 
+      typeof loc === 'string' ? loc : loc.code
+    )
+    if (validLocales.includes(newLocale)) {
+      setLocale(newLocale)
+    }
+  }
+}
 </script>
 
 <template>
@@ -174,6 +198,14 @@ const isAdminUser = computed(() => {
           <template #right>
             <div class="flex items-center gap-2">
               <ClientOnly>
+                <ULocaleSelect
+                  :model-value="locale"
+                  :locales="uiLocales"
+                  size="sm"
+                  variant="ghost"
+                  class="w-32"
+                  @update:model-value="handleLocaleChange($event)"
+                />
                 <UButton v-if="isAdminUser" icon="i-lucide-shield" variant="ghost" color="error" to="/admin">
                   Admin
                 </UButton>

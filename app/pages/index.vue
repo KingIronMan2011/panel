@@ -3,7 +3,7 @@
     <UContainer>
       <UPageHeader
         :title="welcomeTitle"
-        description="Manage your servers and recent activity from one place."
+        :description="t('dashboard.description')"
         :links="headerLinks"
       />
     </UContainer>
@@ -11,7 +11,7 @@
     <UPageBody>
       <UContainer class="space-y-8">
         <section>
-          <h2 class="sr-only">Key metrics</h2>
+          <h2 class="sr-only">{{ t('dashboard.keyMetrics') }}</h2>
           <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-2">
             <template v-if="loading">
               <UCard v-for="i in 2" :key="`metric-skeleton-${i}`">
@@ -29,7 +29,7 @@
             </template>
             <template v-else-if="metrics.length === 0">
               <UCard>
-                <p class="text-sm text-muted-foreground">No server statistics to show yet.</p>
+                <p class="text-sm text-muted-foreground">{{ t('dashboard.noStatistics') }}</p>
               </UCard>
             </template>
             <template v-else>
@@ -71,24 +71,25 @@ definePageMeta({
   auth: true,
 })
 
+const { t } = useI18n()
 const { data: session } = await authClient.useSession(useFetch)
 
-const headerLinks: ButtonProps[] = [
+const headerLinks = computed<ButtonProps[]>(() => [
   {
-    label: 'Account activity',
+    label: t('dashboard.accountActivity'),
     icon: 'i-lucide-clock',
     to: '/account/activity',
     variant: 'soft',
     size: 'sm',
   },
   {
-    label: 'Sessions',
+    label: t('dashboard.sessions'),
     icon: 'i-lucide-shield',
     to: '/account/sessions',
     variant: 'soft',
     size: 'sm',
   },
-]
+])
 
 const authStore = useAuthStore()
 const { displayName } = storeToRefs(authStore)
@@ -111,6 +112,47 @@ const {
 } = await useFetch<AccountSessionsResponse>('/api/account/sessions', { key: 'dashboard-sessions' })
 
 
+function translateMetric(metric: ClientDashboardMetric): ClientDashboardMetric {
+  // Translate label based on metric key
+  let translatedLabel = metric.label
+  let translatedDelta = metric.delta
+
+  switch (metric.key) {
+    case 'servers-active':
+      translatedLabel = t('dashboard.activeServers')
+      if (metric.delta) {
+        if (metric.delta.includes('No servers deployed')) {
+          translatedDelta = t('dashboard.noServersDeployed')
+        } else if (metric.delta.includes('registered')) {
+          const match = metric.delta.match(/(\d+)/)
+          const count = match ? match[1] : '0'
+          translatedDelta = t('dashboard.serversRegistered', { count })
+        }
+      }
+      break
+    case 'schedules-active':
+    case 'automationSchedules':
+    case 'automation_schedules':
+      translatedLabel = t('dashboard.automationSchedules')
+      if (metric.delta) {
+        if (metric.delta.includes('None configured')) {
+          translatedDelta = t('dashboard.noneConfigured')
+        } else if (metric.delta.includes('tracking')) {
+          const match = metric.delta.match(/(\d+)/)
+          const count = match ? match[1] : '0'
+          translatedDelta = t('dashboard.schedulesTracking', { count })
+        }
+      }
+      break
+  }
+
+  return {
+    ...metric,
+    label: translatedLabel,
+    delta: translatedDelta,
+  }
+}
+
 const dashboardData = computed<DashboardData | null>(() => {
   if (!meData.value || !dashboardResponse.value || !sessionsResponse.value) {
     return null
@@ -121,14 +163,14 @@ const dashboardData = computed<DashboardData | null>(() => {
     : 0
 
   const description = activeSessions === 0
-    ? 'No active sessions'
-    : `${activeSessions} device${activeSessions === 1 ? '' : 's'} signed in`
+    ? t('dashboard.noActiveSessions')
+    : `${activeSessions} ${activeSessions === 1 ? t('dashboard.device') : t('dashboard.devices')} ${t('dashboard.signedIn')}`
 
-  const metrics = [...dashboardResponse.value.metrics]
+  const metrics = [...dashboardResponse.value.metrics].map(translateMetric)
   const replacementIndex = metrics.findIndex(metric => ['automationSchedules', 'automation_schedules', 'schedules-active'].includes(metric.key))
   const sessionsMetric: ClientDashboardMetric = {
     key: 'activeSessions',
-    label: 'Active sessions',
+    label: t('dashboard.activeSessions'),
     value: activeSessions,
     delta: description,
     icon: 'i-lucide-users',
@@ -201,8 +243,8 @@ function toErrorMessage(err: unknown, fallback: string) {
 
 const loading = computed(() => dashboardPending.value)
 const error = computed<string | null>(() => {
-  if (meError.value) return toErrorMessage(meError.value, 'Failed to load user data.')
-  if (dashboardError.value) return toErrorMessage(dashboardError.value, 'Failed to load dashboard overview.')
+  if (meError.value) return toErrorMessage(meError.value, t('dashboard.failedToLoadUserData'))
+  if (dashboardError.value) return toErrorMessage(dashboardError.value, t('dashboard.failedToLoadDashboard'))
   return null
 })
 
@@ -247,8 +289,8 @@ const userName = computed(() => {
 
 const welcomeTitle = computed(() => {
   if (userName.value) {
-    return `Welcome back, ${userName.value}`
+    return t('dashboard.welcomeBack', { name: userName.value })
   }
-  return 'Welcome'
+  return t('welcome')
 })
 </script>
