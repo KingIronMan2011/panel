@@ -38,6 +38,7 @@
     "better-auth": "^1.4.1",
     "better-sqlite3": "^12.4.1",
     "drizzle-orm": "^0.36.4",
+    "drizzle-seed": "^0.3.1",
     "jose": "^6.1.0",
     "monaco-editor": "^0.54.0",
     "nodemailer": "^7.0.10",
