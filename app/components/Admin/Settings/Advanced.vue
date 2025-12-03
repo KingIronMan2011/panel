@@ -165,7 +165,7 @@ async function handleSubmit(event: FormSubmitEvent<FormSchema>) {
       </div>
 
       <div class="flex justify-end">
-        <UButton type="submit" color="primary" :loading="isSubmitting" :disabled="isSubmitting">
+        <UButton type="submit" color="primary" variant="subtle" :loading="isSubmitting" :disabled="isSubmitting">
           {{ t('admin.settings.advancedSettings.saveChanges') }}
         </UButton>
       </div>

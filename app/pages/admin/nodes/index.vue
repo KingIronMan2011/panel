@@ -350,7 +350,7 @@ watch(
       <template #footer>
         <div class="flex gap-2">
           <UButton variant="ghost" @click="showCreate = false">{{ t('common.cancel') }}</UButton>
-          <UButton type="submit" color="primary" :loading="isSubmitting" @click="handleCreateNode">{{ t('admin.nodes.saveNode') }}</UButton>
+          <UButton type="submit" color="primary" variant="subtle" :loading="isSubmitting" @click="handleCreateNode">{{ t('admin.nodes.saveNode') }}</UButton>
         </div>
       </template>
     </UModal>

@@ -324,7 +324,7 @@ async function handleTestEmail() {
       </div>
 
       <div class="flex justify-end">
-        <UButton type="submit" color="primary" :loading="isSubmitting" :disabled="isSubmitting || isTesting">
+        <UButton type="submit" color="primary" variant="subtle" :loading="isSubmitting" :disabled="isSubmitting || isTesting">
           {{ t('admin.settings.mailSettings.saveChanges') }}
         </UButton>
       </div>

@@ -197,7 +197,7 @@ async function handleDetach(mountId: string, mountName: string) {
             <UButton variant="ghost" :disabled="isSubmitting" @click="showAttachModal = false">
               Cancel
             </UButton>
-            <UButton type="submit" color="primary" :loading="isSubmitting" :disabled="isSubmitting">
+            <UButton type="submit" color="primary" variant="subtle" :loading="isSubmitting" :disabled="isSubmitting">
               Attach Mount
             </UButton>
           </div>
