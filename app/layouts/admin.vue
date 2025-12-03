@@ -10,7 +10,6 @@ const { t } = useI18n()
 await authClient.useSession(useFetch)
 
 const authStore = useAuthStore()
-await authStore.syncSession({ force: true })
 
 const ADMIN_NAV_ITEMS = computed<AdminNavItem[]>(() => [
   {
@@ -115,7 +114,7 @@ const createDefaultSecuritySettings = (): SecuritySettings => ({
   announcementMessage: '',
 })
 
-const { data: securitySettings } = await useFetch<SecuritySettings>('/api/admin/settings/security', {
+const { data: securitySettings } = await useFetch('/api/admin/settings/security', {
   key: 'admin-layout-security-settings',
   default: () => createDefaultSecuritySettings(),
 })
@@ -155,13 +154,19 @@ const hasTwoFactor = computed(() => Boolean(rawSessionUser.value && 'useTotp' in
 const showTwoFactorPrompt = computed(() => requiresTwoFactor.value && !hasTwoFactor.value)
 
 watch(authStatus, async (value) => {
+  if (value === 'loading') {
+    return
+  }
+  
   if (value === 'authenticated') {
     await authStore.syncSession()
   }
   else if (value === 'unauthenticated') {
-    await router.replace({ path: '/auth/login', query: { redirect: route.fullPath } })
+    if (!route.path.startsWith('/auth/')) {
+      await router.replace({ path: '/auth/login', query: { redirect: route.fullPath } })
+    }
   }
-}, { immediate: true })
+})
 
 const adminTitle = computed(() => {
   const title = route.meta.adminTitle
