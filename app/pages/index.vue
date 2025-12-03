@@ -53,9 +53,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, watch, nextTick } from 'vue'
-import { storeToRefs } from 'pinia'
-import { authClient } from '~/utils/auth-client'
+import { computed } from 'vue'
 
 import type { ButtonProps } from '#ui/types'
 
@@ -72,7 +70,7 @@ definePageMeta({
 })
 
 const { t } = useI18n()
-const { data: session } = await authClient.useSession(useFetch)
+const authStore = useAuthStore()
 
 const headerLinks = computed<ButtonProps[]>(() => [
   {
@@ -91,24 +89,18 @@ const headerLinks = computed<ButtonProps[]>(() => [
   },
 ])
 
-const authStore = useAuthStore()
-const { displayName } = storeToRefs(authStore)
-
 const {
   data: meData,
   error: meError,
-  refresh: refreshMe,
 } = await useFetch<MeResponse>('/api/me', { key: 'dashboard-me' })
 
 const {
   data: dashboardResponse,
   error: dashboardError,
-  refresh: refreshDashboardData,
 } = await useFetch<ClientDashboardResponse>('/api/dashboard', { key: 'dashboard-data' })
 
 const {
   data: sessionsResponse,
-  refresh: refreshSessions,
 } = await useFetch<AccountSessionsResponse>('/api/account/sessions', { key: 'dashboard-sessions' })
 
 
@@ -198,28 +190,6 @@ const dashboardPending = computed(() =>
   !meData.value || !dashboardResponse.value || !sessionsResponse.value
 )
 
-const refreshDashboard = async () => {
-  await Promise.all([
-    refreshMe(),
-    refreshDashboardData(),
-    refreshSessions(),
-  ])
-}
-
-watch(() => authStore.user?.username, async (newUsername, oldUsername) => {
-  if (newUsername && newUsername !== oldUsername && oldUsername !== undefined) {
-    await nextTick()
-    await refreshDashboard()
-  }
-}, { immediate: false })
-
-watch(() => authStore.displayName, async (newDisplayName, oldDisplayName) => {
-  if (newDisplayName && newDisplayName !== oldDisplayName && oldDisplayName !== undefined) {
-    await nextTick()
-    await refreshDashboard()
-  }
-}, { immediate: false })
-
 const metrics = computed<ClientDashboardMetric[]>(() => dashboardData.value?.dashboard.metrics ?? [])
 
 function toErrorMessage(err: unknown, fallback: string) {
@@ -248,44 +218,7 @@ const error = computed<string | null>(() => {
   return null
 })
 
-const userName = computed(() => {
-  const sessionUser = session.value?.user
-  if (sessionUser) {
-    if (sessionUser.username) return sessionUser.username
-    if (sessionUser.email) return sessionUser.email
-    if (sessionUser.name) return sessionUser.name
-  }
-  
-  if (!authStore.isAuthenticated || !authStore.user) {
-    return null
-  }
-  
-  const authUser = authStore.user
-  
-  if (authUser.username) {
-    return authUser.username
-  }
-  
-  if (authUser.email) {
-    return authUser.email
-  }
-  
-  if (authUser.name) {
-    return authUser.name
-  }
-
-  const resolved = displayName.value
-  if (resolved && resolved.length > 0) {
-    return resolved
-  }
-
-  const meUser = dashboardData.value?.user ?? null
-  if (meUser && typeof meUser === 'object' && 'username' in meUser) {
-    return (meUser as { username?: string; email?: string }).username || (meUser as { email?: string }).email || null
-  }
-
-  return null
-})
+const userName = computed(() => authStore.displayName || dashboardData.value?.user?.username || dashboardData.value?.user?.email || null)
 
 const welcomeTitle = computed(() => {
   if (userName.value) {

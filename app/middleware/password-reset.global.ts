@@ -1,35 +1,19 @@
+import { useAuthStore } from '~/stores/auth'
 import { storeToRefs } from 'pinia'
 
-export default defineNuxtRouteMiddleware(async (to) => {
+export default defineNuxtRouteMiddleware((to) => {
   if (import.meta.server) {
     return
   }
 
-  if (to.path.startsWith('/auth/') && !to.path.startsWith('/auth/password/force')) {
-    return
-  }
-
   const authStore = useAuthStore()
-  const { status, requiresPasswordReset, isAuthenticated } = storeToRefs(authStore)
+  const { requiresPasswordReset, isAuthenticated } = storeToRefs(authStore)
 
-  if (status.value === 'loading') {
-    try {
-      await authStore.syncSession({ force: true })
-    }
-    catch {
-      return
-    }
-  }
-
-  if (!isAuthenticated.value) {
+  if (!isAuthenticated.value || !requiresPasswordReset.value) {
     return
   }
 
-  if (!requiresPasswordReset.value) {
-    return
-  }
-
-  if (to.path.startsWith('/auth/password/force')) {
+  if (to.path === '/auth/password/force') {
     return
   }
 

@@ -1,5 +1,5 @@
-import { createError, defineEventHandler, sendRedirect } from 'h3'
-import { resolveSessionUser } from '~~/server/utils/auth/sessionUser'
+import { createError, defineEventHandler, sendRedirect, type H3Event } from 'h3'
+import { requireSessionUser } from '~~/server/utils/auth/sessionUser'
 import { getServerSession } from '~~/server/utils/session'
 import { getAuth, normalizeHeadersForAuth } from '~~/server/utils/auth'
 import type { AuthContext } from '#shared/types/auth'
@@ -63,6 +63,20 @@ function isPublicApiPath(path: string): boolean {
   return matchesPattern(PUBLIC_API_PATTERNS, path)
 }
 
+function redirectToLogin(event: H3Event, requestUrl: string) {
+  const path = event.path ?? requestUrl.split('?')[0] ?? '/'
+  const searchParams = new URLSearchParams()
+  if (path !== '/auth/login' && !path.startsWith('/auth/')) {
+    searchParams.set('redirect', requestUrl)
+  }
+
+  const redirectTarget = searchParams.size > 0
+    ? `/auth/login?${searchParams.toString()}`
+    : '/auth/login'
+
+  return sendRedirect(event, redirectTarget, 302)
+}
+
 export default defineEventHandler(async (event) => {
   const requestUrl = event.node.req.url ?? '/'
   const path = event.path ?? requestUrl.split('?')[0] ?? '/'
@@ -106,8 +120,13 @@ export default defineEventHandler(async (event) => {
           const { useDrizzle, tables, eq } = await import('~~/server/utils/drizzle')
           const db = useDrizzle()
           
-          const apiKeyValue = (typeof apiKeyHeader === 'string' ? apiKeyHeader : apiKeyHeader?.[0]) 
-            || (authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ') ? authHeader.replace('Bearer ', '') : null)
+          const apiKeyValue = typeof apiKeyHeader === 'string' 
+            ? apiKeyHeader 
+            : Array.isArray(apiKeyHeader) 
+              ? apiKeyHeader[0] 
+              : typeof authHeader === 'string' && authHeader.startsWith('Bearer ')
+                ? authHeader.slice(7)
+                : null
           const identifier = apiKeyValue?.split('.')[0] || null
           
           const apiKeyRecord = identifier
@@ -132,7 +151,7 @@ export default defineEventHandler(async (event) => {
           
           if (apiKeyRecord?.id) {
             const now = new Date()
-            db.update(tables.apiKeys)
+            await db.update(tables.apiKeys)
               .set({ 
                 lastUsedAt: now,
                 updatedAt: now,
@@ -225,41 +244,50 @@ export default defineEventHandler(async (event) => {
       })
     }
 
-    const searchParams = new URLSearchParams()
-    if (path !== '/auth/login' && !path.startsWith('/auth/')) {
-      searchParams.set('redirect', requestUrl)
-    }
-
-    const redirectTarget = searchParams.size > 0
-      ? `/auth/login?${searchParams.toString()}`
-      : '/auth/login'
-
-    await sendRedirect(event, redirectTarget, 302)
-    return
+    return redirectToLogin(event, requestUrl)
   }
 
-  const user = resolveSessionUser(session)
+  let user
+  try {
+    user = requireSessionUser(session)
+  } catch (error) {
+    if (isApiRequest) {
+      throw error
+    }
+    return redirectToLogin(event, requestUrl)
+  }
 
-  if (!user) {
+  if (path.startsWith('/admin') && user.role !== 'admin') {
     if (isApiRequest) {
       throw createError({
-        statusCode: 401,
-        statusMessage: 'Unauthorized',
-        message: 'Invalid session user.',
+        statusCode: 403,
+        statusMessage: 'Forbidden',
+        message: 'Administrator privileges required.',
+      })
+    }
+
+    return sendRedirect(event, '/', 302)
+  }
+
+  if (user.passwordResetRequired && !path.startsWith('/auth/password/force')) {
+    if (isApiRequest) {
+      throw createError({
+        statusCode: 403,
+        statusMessage: 'Forbidden',
+        message: 'Password reset required.',
       })
     }
 
     const searchParams = new URLSearchParams()
-    if (path !== '/auth/login' && !path.startsWith('/auth/')) {
+    if (!path.startsWith('/auth/')) {
       searchParams.set('redirect', requestUrl)
     }
 
     const redirectTarget = searchParams.size > 0
-      ? `/auth/login?${searchParams.toString()}`
-      : '/auth/login'
+      ? `/auth/password/force?${searchParams.toString()}`
+      : '/auth/password/force'
 
-    await sendRedirect(event, redirectTarget, 302)
-    return
+    return sendRedirect(event, redirectTarget, 302)
   }
 
   ;(event.context as { auth?: AuthContext }).auth = {

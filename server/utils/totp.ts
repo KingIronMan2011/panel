@@ -12,7 +12,7 @@ export function generateRecoveryTokens(count: number = 8): string[] {
 
 export async function hashRecoveryToken(token: string): Promise<string> {
   const bcrypt = await import('bcryptjs')
-  return bcrypt.default.hash(token, 10)
+  return bcrypt.default.hash(token, 12)
 }
 
 export async function verifyRecoveryToken(token: string, hash: string): Promise<boolean> {

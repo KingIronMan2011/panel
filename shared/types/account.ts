@@ -74,3 +74,10 @@ export interface PasswordForceBody {
   newPassword: string
   confirmPassword?: string
 }
+
+export interface PasswordUpdateResponse {
+  success: boolean
+  revokedSessions: number
+  signedOut?: boolean
+  message?: string
+}

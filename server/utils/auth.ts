@@ -31,34 +31,51 @@ export async function checkPasswordCompromised(userId: string, password: string)
     const prefix = sha1Hash.substring(0, 5)
     const suffix = sha1Hash.substring(5)
 
-    const response = await fetch(`https://api.pwnedpasswords.com/range/${prefix}`, {
-      headers: { 'User-Agent': 'XyraPanel' },
-    })
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 5000)
 
-    if (!response.ok) {
-      return
-    }
+    try {
+      const response = await fetch(`https://api.pwnedpasswords.com/range/${prefix}`, {
+        headers: { 'User-Agent': 'XyraPanel' },
+        signal: controller.signal,
+      })
 
-    const data = await response.text()
-    const lines = data.split(/\r?\n/).filter(line => line.trim().length > 0)
-    const hashes = lines.map(line => {
-      const trimmed = line.trim()
-      const colonIndex = trimmed.indexOf(':')
-      return colonIndex > 0 ? trimmed.substring(0, colonIndex) : trimmed
-    }).filter(Boolean)
-    
-    const isCompromised = hashes.includes(suffix)
-    
-    if (isCompromised) {
-      const db = useDrizzle()
-      await db.update(tables.users)
-        .set({ passwordCompromised: true, updatedAt: new Date() })
-        .where(eq(tables.users.id, userId))
-        .run()
+      clearTimeout(timeoutId)
+
+      if (!response.ok) {
+        return
+      }
+
+      const data = await response.text()
+      const lines = data.split(/\r?\n/).filter(line => line.trim().length > 0)
+      const hashes = lines.map(line => {
+        const trimmed = line.trim()
+        const colonIndex = trimmed.indexOf(':')
+        return colonIndex > 0 ? trimmed.substring(0, colonIndex) : trimmed
+      }).filter(Boolean)
+      
+      const isCompromised = hashes.includes(suffix)
+      
+      if (isCompromised) {
+        const db = useDrizzle()
+        await db.update(tables.users)
+          .set({ passwordCompromised: true, updatedAt: new Date() })
+          .where(eq(tables.users.id, userId))
+          .run()
+      }
+    } catch (fetchError) {
+      clearTimeout(timeoutId)
+      if (fetchError instanceof Error && fetchError.name === 'AbortError') {
+        return
+      }
+      throw fetchError
     }
   }
   catch (error) {
-    console.error(`Failed to check password compromise for user ${userId}:`, error)
+    const isProduction = process.env.NODE_ENV === 'production'
+    if (!isProduction) {
+      console.error(`[Auth] Failed to check password compromise for user ${userId}:`, error)
+    }
   }
 }
 
@@ -124,7 +141,7 @@ function createAuth() {
     trustedOrigins.push(baseURL)
   }
   
-  if (!isProduction || process.env.NODE_ENV !== 'production') {
+  if (!isProduction) {
     if (!trustedOrigins.includes('http://localhost:3000')) {
       trustedOrigins.push('http://localhost:3000')
     }
@@ -236,7 +253,7 @@ function createAuth() {
       enabled: true,
       password: {
         hash: async (password: string) => {
-          return await bcrypt.hash(password, 10)
+          return await bcrypt.hash(password, 12)
         },
         verify: async ({ hash, password }: { hash: string; password: string; userId?: string }) => {
           return await bcrypt.compare(password, hash)
@@ -346,12 +363,34 @@ function createAuth() {
       throw: false,
       onError: (error: unknown, ctx: AuthContext) => {
         const request = (ctx as { request?: { url?: string; method?: string } }).request
-        console.error('[Better Auth Error]', {
-          path: request?.url || 'unknown',
-          method: request?.method || 'unknown',
-          error: error instanceof Error ? error.message : String(error),
-          timestamp: new Date().toISOString(),
-        })
+        const isProduction = process.env.NODE_ENV === 'production'
+        const path = request?.url || 'unknown'
+        const isAuthPath = path.startsWith('/api/auth')
+        
+        if (isProduction) {
+          if (isAuthPath) {
+            return
+          }
+          
+          const errorName = error instanceof Error ? error.name : 'UnknownError'
+          if (errorName === 'APIError' || errorName === 'ValidationError') {
+            return
+          }
+          
+          console.error('[Better Auth Error]', {
+            error: errorName,
+            timestamp: new Date().toISOString(),
+          })
+        } else {
+          const errorMessage = error instanceof Error ? error.message : String(error)
+          console.error('[Better Auth Error]', {
+            path: isAuthPath ? '[REDACTED]' : path,
+            method: request?.method || 'unknown',
+            error: errorMessage,
+            stack: error instanceof Error ? error.stack : undefined,
+            timestamp: new Date().toISOString(),
+          })
+        }
       },
     },
     logger: {
@@ -365,14 +404,8 @@ function createAuth() {
           const requestBody = (ctx as { body?: { password?: string } }).body
           const password = requestBody?.password
 
-          if (newSession?.user?.id && password && newSession.session?.token) {
+          if (newSession?.user?.id && password) {
             await checkPasswordCompromised(newSession.user.id, password)
-            
-            const db = useDrizzle()
-            await db.update(tables.sessions)
-              .set({ updatedAt: new Date() })
-              .where(eq(tables.sessions.sessionToken, newSession.session.token))
-              .run()
           }
         }
       }),

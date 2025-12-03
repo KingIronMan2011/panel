@@ -1,13 +1,11 @@
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed } from 'vue'
 import { storeToRefs } from 'pinia'
 import type { SessionUser } from '#shared/types/auth'
 import type { SecuritySettings, AdminNavItem } from '#shared/types/admin'
 import { useAuthStore } from '~/stores/auth'
-import { authClient } from '~/utils/auth-client'
 
 const { t } = useI18n()
-await authClient.useSession(useFetch)
 
 const authStore = useAuthStore()
 
@@ -114,29 +112,12 @@ const createDefaultSecuritySettings = (): SecuritySettings => ({
   announcementMessage: '',
 })
 
-const { data: securitySettings } = await useFetch('/api/admin/settings/security', {
+const { data: securitySettings } = await useFetch<SecuritySettings>('/api/admin/settings/security', {
   key: 'admin-layout-security-settings',
   default: () => createDefaultSecuritySettings(),
 })
 
-const rawSessionUser = computed<SessionUser | null>(() => storeUser.value ?? null)
-
-const sessionUser = computed<SessionUser | null>(() => {
-  const user = rawSessionUser.value
-  if (!user) {
-    return null
-  }
-
-  return {
-    id: user.id ?? null,
-    name: user.name ?? null,
-    email: user.email ?? null,
-    username: user.username ?? user.email ?? null,
-    role: user.role ?? null,
-    image: user.image ?? null,
-    permissions: user.permissions ?? [],
-  }
-})
+const sessionUser = computed<SessionUser | null>(() => storeUser.value ?? null)
 
 const announcement = computed(() => (securitySettings.value?.announcementEnabled ? securitySettings.value?.announcementMessage?.trim() : ''))
 const maintenanceMessage = computed(() => securitySettings.value?.maintenanceMessage?.trim() || t('layout.defaultMaintenanceMessage'))
@@ -145,28 +126,12 @@ const isMaintenanceGateActive = computed(() => {
   if (!securitySettings.value?.maintenanceMode) {
     return false
   }
-
-  return !rawSessionUser.value || rawSessionUser.value.role !== 'admin'
+  return !sessionUser.value || sessionUser.value.role !== 'admin'
 })
 
 const requiresTwoFactor = computed(() => Boolean(securitySettings.value?.enforceTwoFactor))
-const hasTwoFactor = computed(() => Boolean(rawSessionUser.value && 'useTotp' in rawSessionUser.value && rawSessionUser.value.useTotp))
+const hasTwoFactor = computed(() => Boolean(sessionUser.value && 'useTotp' in sessionUser.value && sessionUser.value.useTotp))
 const showTwoFactorPrompt = computed(() => requiresTwoFactor.value && !hasTwoFactor.value)
-
-watch(authStatus, async (value) => {
-  if (value === 'loading') {
-    return
-  }
-  
-  if (value === 'authenticated') {
-    await authStore.syncSession()
-  }
-  else if (value === 'unauthenticated') {
-    if (!route.path.startsWith('/auth/')) {
-      await router.replace({ path: '/auth/login', query: { redirect: route.fullPath } })
-    }
-  }
-})
 
 const adminTitle = computed(() => {
   const title = route.meta.adminTitle

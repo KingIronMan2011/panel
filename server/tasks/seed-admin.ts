@@ -45,7 +45,7 @@ export default defineTask({
         .where(eq(tables.users.email, user.email))
         .get();
 
-      const hashedPassword = await bcrypt.hash(user.password, 10);
+      const hashedPassword = await bcrypt.hash(user.password, 12);
       const [nameFirst, ...nameRest] = user.name.split(" ");
       const nameLast = nameRest.join(" ") || null;
       const timestamp = new Date();
