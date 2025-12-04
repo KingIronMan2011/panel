@@ -10,7 +10,7 @@ export function generateApiToken(): string {
 }
 
 export async function hashApiToken(token: string): Promise<string> {
-  return bcrypt.hash(token, 10)
+  return bcrypt.hash(token, 12)
 }
 
 export async function verifyToken(token: string, hash: string): Promise<boolean> {

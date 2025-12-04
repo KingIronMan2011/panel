@@ -399,8 +399,6 @@ export interface GeneralSettings {
   url: string
   locale: string
   timezone: string
-  brandText: string
-  showBrandText: boolean
   showBrandLogo: boolean
   brandLogoUrl: string | null
   customCss?: string
@@ -420,10 +418,6 @@ export interface MailSettings {
 
 export interface AdvancedSettings {
   telemetryEnabled: boolean
-  debugMode: boolean
-  recaptchaEnabled: boolean
-  recaptchaSiteKey: string
-  recaptchaSecretKey: string
   sessionTimeoutMinutes: number
   queueConcurrency: number
   queueRetryLimit: number
@@ -759,15 +753,6 @@ export interface AdminNavItem {
 }
 
 export type AdminNavItems = AdminNavItem[]
-
-
-export interface BrandingSettings {
-  brandText: string
-  showBrandText: boolean
-  showBrandLogo: boolean
-  brandLogoUrl: string | null
-}
-
 
 export interface SuspensionBody {
   action: 'suspend' | 'unsuspend' | 'ban' | 'unban'

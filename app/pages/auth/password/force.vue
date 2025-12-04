@@ -79,7 +79,6 @@ async function onSubmit(event: FormSubmitEvent<PasswordForceBody>) {
       body,
     })
 
-    await authStore.syncSession({ force: true })
 
     toast.add({
       title: t('auth.passwordUpdated'),

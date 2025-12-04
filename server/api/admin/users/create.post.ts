@@ -51,7 +51,7 @@ export default defineEventHandler(async (event) => {
   }
 
   try {
-    const hashedPassword = await bcrypt.hash(finalPassword, 10)
+    const hashedPassword = await bcrypt.hash(finalPassword, 12)
     const userId = randomUUID()
     const now = new Date()
     const normalizedRole = role || (rootAdmin === true || rootAdmin === 'true' ? 'admin' : 'user')

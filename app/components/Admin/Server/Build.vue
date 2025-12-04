@@ -235,7 +235,7 @@ async function handleSubmit(event: FormSubmitEvent<FormSchema>) {
     </div>
 
     <div class="flex justify-end">
-      <UButton type="submit" color="primary" :loading="isSubmitting" :disabled="isSubmitting">
+      <UButton type="submit" color="primary" variant="subtle" :loading="isSubmitting" :disabled="isSubmitting">
         Save Build Configuration
       </UButton>
     </div>

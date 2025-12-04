@@ -3,31 +3,27 @@ import { computed } from 'vue'
 
 const { t } = useI18n()
 const route = useRoute()
+
 const serverId = computed(() => route.params.id as string)
 
-const { data: serverResponse } = await useFetch(
-  `/api/servers/${serverId.value}`,
+const { data: serverResponse } = await useAsyncData(
+  () => `server-${serverId.value}`,
+  async () => {
+    const response = await $fetch(`/api/servers/${serverId.value}`)
+    return response as { data: { name: string; identifier: string } }
+  },
   {
     watch: [serverId],
-    key: `server-${serverId.value}`,
-    immediate: true,
   },
 )
 
 const server = computed(() => {
   const response = serverResponse.value as { data: { name: string; identifier: string } } | null
-  if (import.meta.dev) {
-    console.log('[Server Layout] serverResponse.value:', serverResponse.value)
-    console.log('[Server Layout] server data:', response?.data)
-  }
   return response?.data ?? null
 })
 
 const serverName = computed(() => {
   const name = server.value?.name
-  if (import.meta.dev) {
-    console.log('[Server Layout] serverName computed:', name)
-  }
   return name && name.trim() ? name : t('common.server')
 })
 
@@ -35,6 +31,8 @@ const serverIdentifier = computed(() => {
   const identifier = server.value?.identifier
   return identifier || serverId.value
 })
+
+const settingsPath = computed(() => `/server/${serverId.value}/settings`)
 
 const navItems = computed(() => {
   const basePath = `/server/${serverId.value}`
@@ -140,7 +138,7 @@ const navItems = computed(() => {
               <p class="text-xs text-muted-foreground">{{ serverIdentifier }}</p>
             </div>
             <div class="flex items-center gap-2">
-              <UButton icon="i-lucide-cog" variant="ghost" color="neutral" :to="`/server/${serverId.value}/settings`">
+              <UButton icon="i-lucide-cog" variant="ghost" color="neutral" :to="settingsPath">
                 {{ t('server.settings.title') }}
               </UButton>
             </div>

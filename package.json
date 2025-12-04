@@ -3,6 +3,10 @@
   "type": "module",
   "version": "0.0.1-beta",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/XyraPanel/panel.git"
+  },
   "maintainers": [
     {
       "name": "26bz",

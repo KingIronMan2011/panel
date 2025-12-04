@@ -7,7 +7,7 @@ import { storeToRefs } from 'pinia'
 
 const { t } = useI18n()
 const authStore = useAuthStore()
-const { status, user } = storeToRefs(authStore)
+const { status } = storeToRefs(authStore)
 const runtimeConfig = useRuntimeConfig()
 const appName = computed(() => runtimeConfig.public.appName || 'XyraPanel')
 const route = useRoute()
@@ -131,11 +131,6 @@ async function onSubmit(payload: FormSubmitEvent<Schema>) {
       }
 
       throw new Error(result.error)
-    }
-
-    await authStore.syncSession({ force: true })
-    if (!user.value) {
-      throw new Error(t('auth.invalidCredentials'))
     }
 
     toast.add({

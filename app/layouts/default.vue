@@ -2,48 +2,25 @@
 import { computed, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import type { NavigationMenuItem } from '@nuxt/ui'
-import { authClient } from '~/utils/auth-client'
-
-const { data: session } = await authClient.useSession(useFetch)
 
 const { t } = useI18n()
 const route = useRoute()
 const localePath = useLocalePath()
-if (!session.value?.user) {
-  await navigateTo({
-    path: localePath('/auth/login'),
-    query: {
-      redirect: route.fullPath,
-    },
-  })
-}
 
 const authStore = useAuthStore()
 const { user, isAdmin: isAdminRef } = storeToRefs(authStore)
 const signOutLoading = ref(false)
 
-const layoutUser = computed(() => {
-  const sessionData = session.value
-  if (!sessionData?.user) {
-    const { t } = useI18n()
-    throw createError({
-      statusCode: 401,
-      message: t('errors.unauthorized'),
-    })
-  }
-  return sessionData.user
-})
-
 const userLabel = computed(() => {
-  const user = layoutUser.value
-  return user.username || user.email || user.name || t('common.user')
+  if (!user.value) return t('common.user')
+  return user.value.username || user.value.email || user.value.name || t('common.user')
 })
 
 const userAvatar = computed(() => {
   const label = userLabel.value
   return {
     alt: label,
-    text: label.slice(0, 2).toUpperCase(),
+    text: label === t('common.user') ? 'U' : label.slice(0, 2).toUpperCase(),
   }
 })
 
@@ -95,9 +72,8 @@ const isAdminUser = computed(() => {
   return false
 })
 
-const { locale, locales, setLocale } = useI18n()
+const { locale, locales } = useI18n()
 const switchLocalePath = useSwitchLocalePath()
-const router = useRouter()
 
 const uiLocales = computed(() => {
   return locales.value.map(loc => {
@@ -122,7 +98,7 @@ async function handleLocaleChange(newLocale: string | undefined) {
   
   if (validLocale) {
     const code = typeof validLocale === 'string' ? validLocale : validLocale.code
-    const path = switchLocalePath(code as 'en' | 'es')
+    const path = switchLocalePath(code)
     if (path) {
       // Normalize path - ensure trailing slash for root locale paths
       // switchLocalePath returns '/es' for root route, but we need '/es/'
@@ -150,32 +126,7 @@ async function handleLocaleChange(newLocale: string | undefined) {
       </template>
 
       <template #default="{ collapsed }">
-        <ClientOnly>
-          <UNavigationMenu :collapsed="collapsed" :items="navigationItems" orientation="vertical" />
-          <template #fallback>
-            <nav class="relative flex gap-1.5 [&>div]:min-w-0 flex-col" aria-label="Main" data-orientation="vertical">
-              <ul class="isolate min-w-0">
-                <li v-for="item in navigationItems" :key="item.label" class="min-w-0">
-                  <NuxtLink
-                    v-if="!item.children"
-                    :to="item.to"
-                    class="group relative w-full flex items-center gap-1.5 font-medium text-sm px-2.5 py-1.5 text-muted hover:text-highlighted transition-colors"
-                  >
-                    <span class="truncate">{{ item.label }}</span>
-                  </NuxtLink>
-                  <div v-else class="min-w-0">
-                    <button
-                      type="button"
-                      class="group relative w-full flex items-center gap-1.5 font-medium text-sm px-2.5 py-1.5 text-muted hover:text-highlighted transition-colors"
-                    >
-                      <span class="truncate">{{ item.label }}</span>
-                    </button>
-                  </div>
-                </li>
-              </ul>
-            </nav>
-          </template>
-        </ClientOnly>
+        <UNavigationMenu :collapsed="collapsed" :items="navigationItems" orientation="vertical" />
       </template>
 
       <template #footer="{ collapsed }">
@@ -213,22 +164,17 @@ async function handleLocaleChange(newLocale: string | undefined) {
         <UDashboardNavbar>
           <template #right>
             <div class="flex items-center gap-2">
-              <ClientOnly>
-                <ULocaleSelect
-                  :model-value="locale"
-                  :locales="uiLocales"
-                  size="sm"
-                  variant="ghost"
-                  class="w-32"
-                  @update:model-value="handleLocaleChange($event)"
-                />
-                <UButton v-if="isAdminUser" icon="i-lucide-shield" variant="ghost" color="error" to="/admin">
-                  {{ t('admin.title') }}
-                </UButton>
-                <template #fallback>
-                  <span />
-                </template>
-              </ClientOnly>
+              <ULocaleSelect
+                :model-value="locale"
+                :locales="uiLocales"
+                size="sm"
+                variant="ghost"
+                class="w-32"
+                @update:model-value="handleLocaleChange($event)"
+              />
+              <UButton v-if="isAdminUser" icon="i-lucide-shield" variant="ghost" color="error" to="/admin">
+                {{ t('admin.title') }}
+              </UButton>
               <UButton icon="i-lucide-log-out" color="primary" variant="subtle" :loading="signOutLoading"
                 @click="handleSignOut">
                 {{ t('auth.signOut') }}

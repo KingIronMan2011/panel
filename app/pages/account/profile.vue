@@ -116,10 +116,9 @@ async function handleSubmit(event: FormSubmitEvent<ProfileFormSchema>) {
       body: payload,
     })
 
-    await authStore.syncSession({ force: true })
+    await authStore.syncSession()
     await nextTick()
     await refreshProfile()
-    await new Promise(resolve => setTimeout(resolve, 100))
     
     if (profileResponse.value) {
       Object.assign(form, createFormState(profileResponse.value.data))

@@ -3,8 +3,9 @@ import { computed, reactive, ref, watch, onMounted } from 'vue'
 import { storeToRefs } from 'pinia'
 import type { FormSubmitEvent } from '@nuxt/ui'
 import { accountPasswordFormSchema, type AccountPasswordFormInput } from '#shared/schema/account'
-import type { TotpSetupResponse, TotpDisableRequest } from '#shared/types/account'
+import type { TotpSetupResponse, TotpDisableRequest, PasswordUpdateResponse } from '#shared/types/account'
 import { useAuthStore } from '~/stores/auth'
+import { authClient } from '~/utils/auth-client'
 
 definePageMeta({
   auth: true,
@@ -63,10 +64,22 @@ async function handlePasswordSubmit(event: FormSubmitEvent<PasswordFormSchema>) 
   try {
     const payload = event.data
 
-    const response = await $fetch('/api/account/password', {
+    const response = await $fetch<PasswordUpdateResponse>('/api/account/password', {
       method: 'PUT',
       body: payload,
-    }) as { success: boolean; revokedSessions: number }
+    })
+
+    if (response.signedOut === true) {
+      toast.add({
+        title: t('account.security.password.passwordUpdated'),
+        description: response.message || t('account.security.password.passwordChanged'),
+        color: 'success',
+      })
+
+      await authClient.signOut()
+      await navigateTo('/auth/login')
+      return
+    }
 
     toast.add({
       title: t('account.security.password.passwordUpdated'),
@@ -78,8 +91,7 @@ async function handlePasswordSubmit(event: FormSubmitEvent<PasswordFormSchema>) 
       color: 'success',
     })
 
-    await new Promise(resolve => setTimeout(resolve, 100))
-    await authStore.syncSession({ force: true, bypassCache: true })
+    await authStore.syncSession()
 
     Object.assign(passwordForm, {
       currentPassword: '',
@@ -208,7 +220,6 @@ async function verifyTotp() {
 
     totpSetup.value = null
     totpStateOverride.value = true
-    await authStore.syncSession()
     toast.add({
       title: t('account.security.twoFactor.twoFactorEnabled'),
       description: t('account.security.twoFactor.keepRecoveryTokens'),
@@ -249,7 +260,6 @@ async function disableTotp() {
       body: payload,
     })
 
-    await authStore.syncSession()
     totpStateOverride.value = false
     toast.add({
       title: t('account.security.twoFactor.twoFactorDisabled'),
@@ -286,7 +296,7 @@ async function clearCompromisedFlag() {
       color: 'success',
     })
 
-    await authStore.syncSession({ force: true, bypassCache: true })
+    await authStore.syncSession()
   }
   catch (error) {
     const message = error instanceof Error ? error.message : t('account.security.password.failedToClearFlag')

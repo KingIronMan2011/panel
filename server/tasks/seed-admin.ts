@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import bcrypt from "bcryptjs";
-import { useDrizzle, tables, eq } from "~~/server/utils/drizzle";
+import { useDrizzle, tables, eq, and } from "~~/server/utils/drizzle";
 import type { SeedUser } from "#shared/types/seed";
 
 export default defineTask({
@@ -45,7 +45,7 @@ export default defineTask({
         .where(eq(tables.users.email, user.email))
         .get();
 
-      const hashedPassword = await bcrypt.hash(user.password, 10);
+      const hashedPassword = await bcrypt.hash(user.password, 12);
       const [nameFirst, ...nameRest] = user.name.split(" ");
       const nameLast = nameRest.join(" ") || null;
       const timestamp = new Date();
@@ -71,8 +71,10 @@ export default defineTask({
         const existingAccount = db
           .select({ id: tables.accounts.id })
           .from(tables.accounts)
-          .where(eq(tables.accounts.userId, existingUser.id))
-          .where(eq(tables.accounts.provider, "credential"))
+          .where(and(
+            eq(tables.accounts.userId, existingUser.id),
+            eq(tables.accounts.provider, "credential")
+          ))
           .get();
 
         if (existingAccount) {

@@ -25,8 +25,6 @@ const adminGeneralSettingsBaseSchema = z.object({
   url: z.string().trim().pipe(z.url('Enter a valid URL')),
   locale: z.enum(localeEnumValues, 'Select a default language'),
   timezone: z.enum(timezoneEnumValues, 'Select a timezone'),
-  brandText: z.string().trim().max(80, 'Brand text must be 80 characters or less'),
-  showBrandText: z.boolean(),
   showBrandLogo: z.boolean(),
   brandLogoUrl: nullableUrl,
 })
@@ -94,9 +92,6 @@ export type AdminMailSettingsUpdateInput = z.infer<typeof adminMailSettingsUpdat
 export const adminAdvancedSettingsFormSchema = z.object({
   telemetryEnabled: z.boolean(),
   debugMode: z.boolean(),
-  recaptchaEnabled: z.boolean(),
-  recaptchaSiteKey: z.string().trim().optional(),
-  recaptchaSecretKey: z.string().trim().optional(),
   sessionTimeoutMinutes: z.number('Session timeout must be a number').int().positive(),
   queueConcurrency: z.number('Queue concurrency must be a number').int().positive(),
   queueRetryLimit: z.number('Queue retry limit must be a number').int().min(0),

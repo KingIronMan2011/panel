@@ -160,7 +160,7 @@ async function createApiKey(event: FormSubmitEvent<KeyFormSchema>) {
     }
 
     newKeyToken.value = response.meta.secret_token
-    Object.assign(createForm, keySchema.parse({}))
+    Object.assign(createForm, keySchema.value.parse({}))
     showCreateModal.value = true
 
     await refreshKeys()

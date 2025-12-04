@@ -69,7 +69,6 @@ onMounted(async () => {
 })
 
 async function loadSessions() {
-  await authStore.syncSession()
   await refreshSessions()
 }
 

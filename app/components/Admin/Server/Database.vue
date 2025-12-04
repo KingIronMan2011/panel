@@ -200,7 +200,7 @@ async function rotatePassword(databaseId: string) {
             <UButton variant="ghost" :disabled="isSubmitting" @click="showCreateModal = false">
               Cancel
             </UButton>
-            <UButton type="submit" color="primary" :loading="isSubmitting" :disabled="isSubmitting">
+            <UButton type="submit" color="primary" variant="subtle" :loading="isSubmitting" :disabled="isSubmitting">
               Create Database
             </UButton>
           </div>

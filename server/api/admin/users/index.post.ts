@@ -27,7 +27,7 @@ export default defineEventHandler(async (event) => {
   const db = useDrizzle()
   const now = new Date()
 
-  const hashedPassword = await bcrypt.hash(body.password, 10)
+  const hashedPassword = await bcrypt.hash(body.password, 12)
 
   const newUser = {
     id: randomUUID(),
