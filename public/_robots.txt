@@ -1,6 +1,5 @@
 User-agent: *
-Disallow: /api/
-Disallow: /_nuxt/
+
 Disallow: /node_modules/
 Disallow: /server/
 Disallow: /admin/
