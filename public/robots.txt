@@ -1,0 +1,12 @@
+User-agent: *
+Disallow: /api/
+Disallow: /_nuxt/
+Disallow: /node_modules/
+Disallow: /server/
+Disallow: /admin/
+Disallow: /internal/
+Disallow: /.env
+Disallow: /.git
+Disallow: /private/
+
+Allow: /
